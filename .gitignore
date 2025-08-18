@@ -14,3 +14,4 @@ packages/lifelog-adapter/dist
 packages/lifelog-adapter/daily
 .DS_Store
 packages/lifelog-adapter/.env
+.env

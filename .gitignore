@@ -1,0 +1,8 @@
+**/node_modules/
+**/artifacts/
+**/history/
+**/outputs/
+packages/lifelog-adapter/lifelogs
+packages/lifelog-adapter/daily
+**/debug/
+**/.DS_Store

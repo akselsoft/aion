@@ -1,0 +1,38 @@
+{
+    "implementation": "free",
+    "sources": [
+        {
+            "type": "artifact",
+            "name": "charter",
+            "location": "./shared/artifacts/charter",
+            "prompt": {
+                "base": "This is the official project charter.",
+                "mode": "additive"
+            }
+        },
+        {
+            "type": "artifact",
+            "name": "names",
+            "location": "./shared/artifacts/names"
+        },
+        {
+            "type": "prompts",
+            "name": "prompts",
+            "location": "./shared/artifacts/prompts"
+        },
+        {
+            "type": "wikisss",
+            "name": "wiki entry",
+            "config": {
+                "url": "https://en.wikipedia.org/wiki/Baby_names",
+                "copyToArtifacts": true
+            }
+        }
+    ],
+    "engines": [
+        "stopWordReducer",
+        "tokenTrimmer",
+        "chatgpt"
+    ],
+    "output": "./output"
+}

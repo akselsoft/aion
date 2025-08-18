@@ -1,0 +1,55 @@
+{
+    "Sources": [
+        {
+            "type": "artifact",
+            "name": "charter",
+            "location": "./artifacts/general/charter",
+            "prompt": {
+                "base": "This is the official project charter. Use it to ground your assumptions about scope, goals, and roles.",
+                "mode": "additive"
+            }
+        },
+        {
+            "type": "artifact",
+            "name": "meetingNotes",
+            "location": "./artifacts/meetings/iteration82",
+            "prompt": {
+                "base": "These are notes from the last team meeting. Summarize and extract any important decisions or action items.",
+                "mode": "replace"
+            }
+        },
+        {
+            "type": "artifact",
+            "name": "team",
+            "location": "./artifacts/teams/iteration82",
+            "prompt": {
+                "base": "These are notes from the last team meeting. Summarize and extract any important decisions or action items.",
+                "mode": "replace"
+            }
+        }
+    ],
+    "Engines": [
+        "stopWordReducer",
+        "tokenTrimmer",
+        "chatgpt"
+    ],
+    "tokenReducer": {
+        "enabled": true,
+        "maxTokens": 1000,
+        "model": "gpt-4"
+    },
+    "stopWords": [
+        "ok",
+        "um",
+        "yeah",
+        "actually"
+    ],
+    "promptTemplates": {
+        "chatgpt": "Analyze the cleaned and trimmed input and return a list of priorities and concerns.",
+        "summarizer": "Summarize in clear bullet points suitable for executive stakeholders."
+    },
+    "Artifacts": [
+        "iterationSummary",
+        "pullRequestList"
+    ]
+}

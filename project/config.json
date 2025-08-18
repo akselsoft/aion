@@ -1,0 +1,40 @@
+{
+    "implementation": "deacon",
+    "tier": "free",
+    "sources": [
+        {
+            "type": "artifact",
+            "name": "charter",
+            "location": "./shared/artifacts/charter",
+            "prompt": {
+                "base": "This is the official project charter.",
+                "mode": "additive"
+            }
+        },
+        {
+            "type": "artifact",
+            "name": "team",
+            "location": "./shared/artifacts/team"
+        },
+        {
+            "type": "artifact",
+            "name": "team",
+            "location": "./iteration-1/artifacts/team"
+        },
+        {
+            "type": "prompts",
+            "name": "prompts",
+            "location": "./shared/artifacts/prompts"
+        },
+        {
+            "type": "artifact",
+            "name": "meetingNotes",
+            "location": "./iteration-1/artifacts/meeting"
+        }
+    ],
+    "engines": [
+        "tokenTrimmer",
+        "chatgpt"
+    ],
+    "output": "./output"
+}

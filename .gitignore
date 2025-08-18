@@ -4,4 +4,13 @@ gcbo/outputs
 gcbo-daily/artifacts
 gcbo-daily/outputs
 people/artifacts
+people/shared
+people/outputs
+people/history
 node_modules
+packages/lifelog-adapter/lifelogs
+packages/lifelog-adapter/debug
+packages/lifelog-adapter/dist
+packages/lifelog-adapter/daily
+.DS_Store
+packages/lifelog-adapter/.env

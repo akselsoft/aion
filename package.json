@@ -1,0 +1,19 @@
+{
+    "name": "aion",
+    "version": "1.0.0",
+    "description": "Aion Project Runner and Utilities",
+    "main": "runner.js",
+    "scripts": {
+        "start": "node runner.js",
+        "dev": "NODE_ENV=development node runner.js"
+    },
+    "dependencies": {
+        "@dqbd/tiktoken": "^1.0.21",
+        "cheerio": "^1.1.2",
+        "dotenv": "^16.6.1",
+        "openai": "^4.104.0"
+    },
+    "keywords": [],
+    "author": "Andrew MacNeill",
+    "license": "MIT"
+}

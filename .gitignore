@@ -1,0 +1,7 @@
+gcbo/artifacts/
+gcbo/history
+gcbo/outputs
+gcbo-daily/artifacts
+gcbo-daily/outputs
+people/artifacts
+node_modules

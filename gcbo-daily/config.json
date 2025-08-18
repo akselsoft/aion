@@ -1,0 +1,141 @@
+{
+    "implementation": "deacon",
+    "tier": "premium",
+    "sources": [
+        {
+            "type": "devops.welcome",
+            "name": "Welcome",
+            "enabled": false,
+            "repoName": "GCBOSource"
+        },
+        {
+            "type": "devops.repo.readme",
+            "name": "Repo Readme",
+            "enabled": false,
+            "repoName": "GCBOSource"
+        },
+        {
+            "type": "summaryHistory",
+            "name": "summary history"
+        },
+        {
+            "type": "sharedFiles",
+            "name": "shared files",
+            "enabled": false
+        },
+        {
+            "type": "devops.capacity",
+            "name": "capacity",
+            "enabled": true
+        },
+        {
+            "type": "devops.pullrequests.delta",
+            "name": "PR Delta",
+            "enabled": true,
+            "windowDays": 10
+        },
+        {
+            "type": "devops.pullrequests",
+            "name": "Pull Requests",
+            "iteration": "83",
+            "enabled": false
+        },
+        {
+            "type": "devops.workitems.summary",
+            "name": "workitems-summary",
+            "iteration": "${iteration}",
+            "enabled": false
+        },
+        {
+            "type": "devops.workitems.summary",
+            "name": "next-iteration",
+            "iteration": "83",
+            "enabled": true
+        },
+        {
+            "type": "devops.planning",
+            "name": "planning",
+            "enabled": false,
+            "maxPriority": 2
+        },
+        {
+            "type": "artifact",
+            "name": "iteration-1",
+            "location": "./iteration-1/artifacts",
+            "recurse": true,
+            "enabled": false
+        },
+        {
+            "type": "artifact",
+            "name": "meetings",
+            "location": "./meetings",
+            "recurse": true,
+            "enabled": true
+        }
+    ],
+    "engines": [
+        "tokenTrimmer",
+        "devops.planningx",
+        "devops.recommendation",
+        "devops.pr.summary",
+        "chatgpt"
+    ],
+    "chatgpt": {
+        "prompts": {
+            "summaryBrief": "Analyze the summaries from this and previous iterations. Identify key metrics (user stories, bugs, effort levels), velocity trends, and note any deviations. Provide a clear, concise brief for the current iteration with strategic insight for the next. Identify meaningful and viable solutions",
+            "postPrompt": "Ensure the summary is concise and actionable."
+        }
+    },
+    "recommendations": {
+        "iterations": [
+            "82",
+            "81",
+            "80"
+        ]
+    },
+    "output": "./output",
+    "keywordExtraction": {
+        "minCountThreshold": 4,
+        "stopwords": [
+            "the",
+            "and",
+            "for",
+            "with",
+            "this",
+            "that",
+            "from",
+            "into",
+            "also",
+            "was",
+            "are",
+            "but",
+            "not",
+            "have",
+            "has",
+            "had",
+            "all",
+            "any",
+            "can",
+            "will",
+            "just",
+            "being",
+            "been",
+            "then",
+            "now",
+            "you",
+            "your"
+        ],
+        "keywordPhrases": [
+            "dynamic questions",
+            "file upload",
+            "internal notes",
+            "applicant portal",
+            "date validation",
+            "language switch",
+            "shareholder view"
+        ],
+        "excludeWorkItemTypes": [
+            "Task"
+        ]
+    }
+}

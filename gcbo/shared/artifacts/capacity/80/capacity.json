@@ -1,0 +1,49 @@
+[
+  {
+    "teamMember": {
+      "id": "e95c3ad2-c169-4f15-b948-181f9457b128",
+      "displayName": "Alexander Ross <alexander.ross@pch.gc.ca>",
+      "uniqueName": "alexander.ross@pch.gc.ca",
+      "url": "https://spsprodcca1.vssps.visualstudio.com/Ac8b2b5a8-2738-411a-be16-c71a89ab3eee/_apis/Identities/e95c3ad2-c169-4f15-b948-181f9457b128",
+      "imageUrl": "https://dev.azure.com/pchlegacy/_api/_common/identityImage?id=e95c3ad2-c169-4f15-b948-181f9457b128"
+    },
+    "activities": [
+      {
+        "capacityPerDay": 3,
+        "name": "Development"
+      },
+      {
+        "capacityPerDay": 2,
+        "name": "Testing"
+      }
+    ],
+    "daysOff": [],
+    "url": "https://dev.azure.com/pchlegacy/8d81243d-98ee-4f61-b848-6f2d2782e045/eaab2e9b-fd81-484b-b69d-9e6fb2f77e45/_apis/work/teamsettings/iterations/5fc386dc-3ced-4340-9198-d9bdb160126c/capacities/e95c3ad2-c169-4f15-b948-181f9457b128"
+  },
+  {
+    "teamMember": {
+      "id": "40fed878-80f9-4761-8099-6c010da26e60",
+      "displayName": "Andrew MacNeill <andrew.macneill@pch.gc.ca>",
+      "uniqueName": "andrew.macneill@pch.gc.ca",
+      "url": "https://spsprodcca1.vssps.visualstudio.com/Ac8b2b5a8-2738-411a-be16-c71a89ab3eee/_apis/Identities/40fed878-80f9-4761-8099-6c010da26e60",
+      "imageUrl": "https://dev.azure.com/pchlegacy/_api/_common/identityImage?id=40fed878-80f9-4761-8099-6c010da26e60"
+    },
+    "activities": [
+      {
+        "capacityPerDay": 3,
+        "name": "Development"
+      },
+      {
+        "capacityPerDay": 2,
+        "name": "Testing"
+      }
+    ],
+    "daysOff": [
+      {
+        "start": "2025-05-01T00:00:00Z",
+        "end": "2025-05-19T00:00:00Z"
+      }
+    ],
+    "url": "https://dev.azure.com/pchlegacy/8d81243d-98ee-4f61-b848-6f2d2782e045/eaab2e9b-fd81-484b-b69d-9e6fb2f77e45/_apis/work/teamsettings/iterations/5fc386dc-3ced-4340-9198-d9bdb160126c/capacities/40fed878-80f9-4761-8099-6c010da26e60"
+  }
+]

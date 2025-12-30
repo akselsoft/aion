@@ -2,12 +2,15 @@ const artifactLoader = require('./artifact');
 const wikiLoader = require('./wiki'); // optional, example of a web loader
 const summaryHistoryLoader = require('./summaryHistory'); // ✅ new line
 const sharedFilesLoader = require('./sharedFiles'); // ✅ new
+const documentsLoader = require('./documents');
 const coreLoaders = {
     artifact: artifactLoader,
     prompts: artifactLoader,  // alias: treated same as 'artifact'
     wiki: wikiLoader,
     summaryHistory: summaryHistoryLoader,
-    sharedFiles: sharedFilesLoader
+    sharedFiles: sharedFilesLoader,
+    documents: documentsLoader,
+    office: documentsLoader // alias
 };
 
 /**

@@ -11,14 +11,17 @@ module.exports = async function makePRSummaryMD(engineData, cfg, projectRoot = {
         return [v];
     };
 
-    const inputs = getPaths(cfg.prsSummaryPath).map(p =>
+    let prPath = cfg.prsSummaryPath || 'artifacts/prs/prs-summary.json';
+    prPath = path.join(projectRoot, prPath);
+
+    const inputs = getPaths(prPath).map(p =>
         path.isAbsolute(p) ? p : path.join(projectRoot, p)
     );
     const outDir = path.join(projectRoot, cfg.outDir || 'artifacts/prs');
     const outFile = path.join(outDir, cfg.fileName || 'PR-Summary.md');
     fs.mkdirSync(outDir, { recursive: true });
 
-    const data = JSON.parse(fs.readFileSync(prsSummaryPath, 'utf8'));
+    const data = JSON.parse(fs.readFileSync(prPath, 'utf8'));
     const prs = data.prs || [];
 
     const fileToPRs = new Map();

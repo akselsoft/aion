@@ -1,5 +1,6 @@
 const path = require('path');
-const { getCoreLoader } = require('../sourceAdapters');
+// Fix case-sensitive import to match actual folder name
+const { getCoreLoader } = require('../sourceadapters');
 
 // Custom loader resolution — implementation-specific
 function getCustomLoader(projectRoot, type) {

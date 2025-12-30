@@ -8,7 +8,7 @@ console.log("✅ devops.recommendation.js loaded");
 
 module.exports = async function runRecommendationsEngine(data, sourceConfig, projectRoot) {
     console.log("Running devops.recommendation engine with projectRoot:", projectRoot);
-    console.log("🧪 Config :", sourceConfig);
+    console.log("🧪 Config :", sourceConfig.recommendations);
     let finalSummary = ``;
     let iterations = []
     if (sourceConfig && sourceConfig.recommendations) {
@@ -131,6 +131,7 @@ module.exports = async function runRecommendationsEngine(data, sourceConfig, pro
     return {
         name: sourceConfig.name || 'devops recommendations engine',
         type: sourceConfig.type,
+        prompt: sourceConfig.recommendations.prompt || `Based on the analysis of the iteration ${folder}, provide recommendations for improving team performance and addressing any identified issues.`,
         documents: [{
             filename: 'iteration-recommendations.md',
             content: finalSummary

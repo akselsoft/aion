@@ -20,19 +20,74 @@ const FIELDS = [
     "Microsoft.VSTS.Common.ClosedDate",
     "Microsoft.VSTS.Common.ActivatedDate"
 ];
+const MAX_BATCH = 200;
 
-async function fetchWorkItemsByIds(ids) {
-    if (!ids.length) return [];
-
-    const url = `${BASE_URL.replace(`/${TEAM}/_apis`, '')}/_apis/wit/workitemsbatch?api-version=7.0`;
-    const res = await axios.post(url, {
-        ids,
-        fields: FIELDS
-    }, getAuthHeader());
-
-    return res.data.value;
+// Simple chunker
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
 }
 
+// Minimal retry wrapper for transient errors (429/503)
+async function requestWithRetry(fn, { retries = 3, baseDelayMs = 500 } = {}) {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (err) {
+      const status = err?.response?.status;
+      if (attempt >= retries || !(status === 429 || status === 503)) throw err;
+      const delay = baseDelayMs * Math.pow(2, attempt);
+      await new Promise(r => setTimeout(r, delay));
+      attempt++;
+    }
+  }
+}
+
+async function fetchWorkItemsByIds(ids, opts = {}) {
+  if (!ids || !ids.length) return [];
+
+  const {
+    chunkSize = MAX_BATCH,
+    concurrency = 4,                 // keep it polite
+    errorPolicy = 'Omit',            // ignore missing/denied items
+    expand = undefined               // e.g., 'Relations','Fields','Links','All'
+  } = opts;
+
+  const url = `${BASE_URL.replace(`/${TEAM}/_apis`, '')}/_apis/wit/workitemsbatch?api-version=7.0`;
+  const batches = chunk(ids, Math.min(chunkSize, MAX_BATCH));
+
+  // Run with limited concurrency (no extra deps)
+  const results = [];
+  let idx = 0;
+
+  async function worker() {
+    while (idx < batches.length) {
+      const myIndex = idx++;
+      const batchIds = batches[myIndex];
+
+      const res = await requestWithRetry(() =>
+        axios.post(
+          url,
+          { ids: batchIds, fields: FIELDS, errorPolicy, ...(expand ? { $expand: expand } : {}) },
+          getAuthHeader()
+        )
+      );
+
+      // Collect
+      results.push(...(res.data?.value || []));
+    }
+  }
+
+  // spawn workers
+  const workers = Array.from({ length: Math.min(concurrency, batches.length) }, worker);
+  await Promise.all(workers);
+
+  // Reorder to match the original ids (API may return out of order)
+  const byId = new Map(results.map(wi => [wi.id, wi]));
+  return ids.map(id => byId.get(id)).filter(Boolean);
+}
 async function fetchParentRelations(ids) {
     const promises = ids.map(id =>
         axios.get(`${BASE_URL.replace(`/${TEAM}/_apis`, '')}/_apis/wit/workitems/${id}?api-version=7.0&$expand=relations`, getAuthHeader())

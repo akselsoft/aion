@@ -266,6 +266,10 @@ ${peopleRows}
 
 const mdPath = path.join(outDir, 'prs-summary.md');
 fs.writeFileSync(mdPath, md);
+// write the JSON objects to a file named prs-summary.json
+const jsonPath = path.join(outDir, 'prs-summary.json');
+fs.writeFileSync(jsonPath, JSON.stringify(rollup, null, 2));
+
     // Return both artifacts so downstream engines can pick them up
     return {
         name: 'devops-pullrequests',

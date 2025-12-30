@@ -2,9 +2,9 @@ const fs = require('fs');
 const { logInfo, logFile, logWarn, logError, logStep } = require('./utils/logger');
 
 async function runEngines(engineList, data, config, projectRoot) {    // show me the entire config object
-    console.log("Running engines with config:", config);
+    console.log("Running engines with config:", config.engines);
     console.log("Engine project root:", projectRoot);
-    console.log("Engine Data:", data);
+    console.log("Engine Data:", data.length);
     const userTier = config.tier || 'free'; // e.g., 'free' or 'premium'
 
     for (const engine of engineList) {

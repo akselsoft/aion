@@ -28,12 +28,28 @@ ${prompts.join('\n\n')}
 
     return systemPrompt;
 }
-
+// add near top
+function flattenSections(nodes, pathPrefix = []) {
+  const out = [];
+  for (const n of nodes || []) {
+    const lineage = [...pathPrefix, n.name].filter(Boolean).join(' › ');
+    out.push({
+      ...n,
+      // carry a fully-qualified name so child context is visible
+      name: lineage,
+      documents: n.documents || [],
+    });
+    if (Array.isArray(n.children) && n.children.length) {
+      out.push(...flattenSections(n.children, [...pathPrefix, n.name]));
+    }
+  }
+  return out;
+}
 // Combines section content and extracts section-specific prompts
 function generateFullInputAndPrompts(data, config) {
     const prompts = [];
 
-    const allSections = data.map(section => {
+    const allSections = flattenSections(data).map(section => {
         const prompt = section.prompt?.trim() || '';
 
         /*const docs = section.documents

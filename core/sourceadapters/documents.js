@@ -7,19 +7,9 @@ const path = require('path');
 // - turndown: HTML -> Markdown
 // - pdf-parse: PDF -> text
 // - xlsx: XLSX -> CSV/JSON (sheets)
+// NOTE: Some environments abort when requiring optional native modules.
+// To avoid startup crashes we lazy-load inside converters.
 let mammoth, TurndownService, pdfParse, XLSX;
-try {
-  mammoth = require('mammoth');
-} catch {}
-try {
-  TurndownService = require('turndown');
-} catch {}
-try {
-  pdfParse = require('pdf-parse');
-} catch {}
-try {
-  XLSX = require('xlsx');
-} catch {}
 
 async function ensureDir(dir) {
   await fs.mkdir(dir, { recursive: true }).catch(() => {});
@@ -58,6 +48,8 @@ function resolvePrompt(folderPath, sourceConfig, files) {
 }
 
 async function convertDocxToMarkdown(filePath) {
+  if (!mammoth) { try { mammoth = require('mammoth'); } catch {} }
+  if (!TurndownService) { try { TurndownService = require('turndown'); } catch {} }
   if (mammoth && TurndownService) {
     const { value: html } = await mammoth.convertToHtml({ path: filePath });
     const turndown = new TurndownService({ headingStyle: 'atx', emDelimiter: '*', bulletListMarker: '-' });
@@ -91,9 +83,8 @@ async function convertDocxToMarkdown(filePath) {
 }
 
 async function convertPdfToMarkdown(filePath) {
-  if (!pdfParse) {
-    throw new Error('Missing dependency: pdf-parse');
-  }
+  if (!pdfParse) { try { pdfParse = require('pdf-parse'); } catch {} }
+  if (!pdfParse) throw new Error('Missing dependency: pdf-parse');
   const dataBuffer = await fs.readFile(filePath);
   const data = await pdfParse(dataBuffer);
   const lines = [`# ${path.basename(filePath)}`, '', data.text.trim()];
@@ -147,6 +138,7 @@ function csvToMarkdownTable(csvText) {
 }
 
 async function convertXlsxToOutputs(filePath, excelFormat = 'md') {
+  if (!XLSX) { try { XLSX = require('xlsx'); } catch {} }
   if (!XLSX) throw new Error('Missing dependency: xlsx');
   const wb = XLSX.read(await fs.readFile(filePath));
   const outputs = [];
@@ -178,7 +170,8 @@ module.exports = async function loadDocumentsSource(projectRoot, sourceConfig) {
   const promptText = resolvePrompt(folderPath, sourceConfig, files);
 
   // Identify candidate files
-  const allowed = ['.docx', '.pdf', '.xlsx'];
+  // Include Markdown/text so existing .md/.txt artifacts are ingested alongside converted binaries
+  const allowed = ['.docx', '.pdf', '.xlsx', '.md', '.txt'];
   let filePaths;
   if (recurse) {
     filePaths = await readFilesRecursively(folderPath, allowed);

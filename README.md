@@ -134,6 +134,246 @@ The initial Node based implementation is called
 node runner.js ./folder/config.json
 ```
 
+### Watcher (auto-run configs on change)
+
+Use `AION_Watcher.js` to automatically rerun AION configurations when source files change. This is useful for working on iterative content analysis where configs need to re-execute as inputs are modified.
+
+**Single config mode (for monitoring one folder-config pair)**
+```bash
+node AION_Watcher.js <watchDir> <configPath> [options]
+```
+
+Example with parameters:
+```bash
+node AION_Watcher.js ./project project/config.json --interval=5000 --debounce=1500
+```
+
+**Map mode (recommended for multiple independent projects/domains)**
+
+When monitoring multiple separate directories, each with its own config file, use a watch-map JSON file to define the folder-to-config mappings.
+
+1. Create a watch-map file (e.g., `workspace/watch-map.json`):
+```json
+[
+  { "folder": "project-a", "config": "project-a/config.json" },
+  { "folder": "project-b", "config": "project-b/config.json" },
+  { "folder": "project-c", "config": "project-c/config.json" },
+  { "folder": "research/papers", "config": "research/papers-config.json" }
+]
+```
+
+Field descriptions:
+- `folder`: Directory to monitor for changes (relative to the directory containing the watch-map file, or use absolute paths).
+- `config`: AION config file to execute when this folder changes (relative to the map file directory, or use absolute paths).
+
+2. Start the watcher with the map file:
+```bash
+node AION_Watcher.js <rootDir> <watchMapPath> [options]
+```
+
+Example:
+```bash
+node AION_Watcher.js . workspace/watch-map.json --interval=3000 --debounce=1000
+```
+
+**Parameters**
+
+- `--interval` (default: 2000ms)  
+  How often to scan folders for changes. Smaller values = more responsive but higher CPU usage.
+
+- `--debounce` (default: 750ms)  
+  Time to wait after detecting a change before triggering a config run. Prevents rapid re-triggering if multiple files change in quick succession.
+
+**Watch-map Walkthrough**
+
+Given this watch-map structure:
+```json
+[
+  { "folder": "Daily", "config": "Daily/watch-map.json" },
+  { "folder": "Book-analysis", "config": "Book-analysis/config.json" },
+  { "folder": "project", "config": "project/config.json" }
+]
+```
+
+and you run:
+```bash
+node AION_Watcher.js . watch-map.json --interval=3000 --debounce=1000
+```
+
+**What happens:**
+
+1. Watcher monitors three folders: `Daily/`, `Book-analysis/`, and `project/`
+2. Each folder is tracked independently with its own hash of file contents
+3. When a file in `Daily/` changes → runs `Daily/watch-map.json`
+4. When a file in `Book-analysis/` changes → runs `Book-analysis/config.json`
+5. When a file in `project/` changes → runs `project/config.json`
+6. Changes are debounced by 1 second, so if 5 files change in 500ms, only one run is triggered
+7. Scans for new changes every 3 seconds
+
+**Behavior Notes**
+
+- Each mapped folder's state is hashed independently; only its matching config executes when that folder changes
+- Runs are queued and processed sequentially to prevent race conditions or redundant API calls
+- Default ignored patterns: `node_modules`, `.git`, `.DS_Store`, `tmp`, `dist`, `outputs`, `history`
+- The watcher continues running until manually stopped (Ctrl+C)
+- Each run logs timestamp, folder detected, and config being executed
+
+---
+
+## Engines
+
+AION supports a wide range of built-in and custom engines for collection, analysis, and response workflows. Engines are referenced in config files by name and run in the order specified.
+
+### Core LLM Engines (`core/engines/`)
+
+These engines send content to various LLM providers for analysis and synthesis.
+
+| Engine | Provider | Model (default) | Notes |
+|--------|----------|-----------------|-------|
+| `chatgpt` | OpenAI | gpt-4 | Industry standard; requires OPENAI_API_KEY |
+| `claude` | Anthropic | claude-3-5-sonnet-20241022 | Strong reasoning; requires ANTHROPIC_API_KEY |
+| `grok` | xAI | grok-beta | OpenAI-compatible; requires GROK_API_KEY |
+| `groq` | Groq | mixtral-8x7b-32768 | Ultra-fast inference; requires GROQ_API_KEY |
+| `perplexity` | Perplexity | llama-3.1-70b-instruct | OpenAI-compatible; requires PERPLEXITY_API_KEY |
+| `cohere` | Cohere | command-r-plus | Specialized for production workloads; requires COHERE_API_KEY |
+| `mistral` | Mistral | mistral-large-latest | Open-source friendly; requires MISTRAL_API_KEY |
+| `ollama` | Local (Ollama) | mistral | Runs locally on http://localhost:11434; no API key needed |
+| `huggingface` | Hugging Face | mistralai/Mistral-7B-Instruct-v0.1 | Inference API for HF models; requires HUGGINGFACE_API_KEY |
+
+**Common LLM Engine Config Properties:**
+```json
+{
+  "engine": "chatgpt",
+  "model": "gpt-4",
+  "temperature": 0.3,
+  "maxTokens": 4096,
+  "inputType": "artifact",
+  "outputType": "ChatGPT",
+  "writeInput": true,
+  "writeOutputs": true,
+  "prompt": "Your analysis prompt here"
+}
+```
+
+### Core Utility Engines (`core/engines/`)
+
+| Engine | Purpose |
+|--------|---------|
+| `tokenTrimmer` | Reduces token count by removing or summarizing content; respects configured thresholds |
+| `stopWordReducer` | Removes common stop words to reduce file size; useful for pre-processing |
+| `llmsummarizer` | Generic summarization using configured LLM |
+| `heatmap` | Analyzes frequency and importance of terms across documents |
+
+### Built-in Engines (`lib/impl/builtin/`)
+
+Engines that ship with AION for data collection, transformation, and output.
+
+**Collectors & Processors:**
+| Engine | Purpose |
+|--------|---------|
+| `documents.collector.js` | Discovers and collects documents from folders per config |
+| `extract-blocks.js` | Extracts specific blocks (e.g., code, quotes) from markdown or text |
+| `archive.js` | Archives processed outputs to timestamped backups |
+
+**Transformers:**
+| Engine | Purpose |
+|--------|---------|
+| `artifacts.js` | Manages artifact files and metadata; supports JSON/CSV/Markdown |
+| `dumpPassed.js` | Debug utility; writes current `ctx.passedFiles` to JSON for inspection |
+| `lifelog.js` | Processes personal/daily log entries into structured summaries |
+
+**Responders & Utilities:**
+| Engine | Purpose |
+|--------|---------|
+| `default.js` | Default responder; writes outputs to files |
+| `notAuthorized.js` | Permission handler; skips execution if authorization fails |
+| `heatmap.js` | (wrapper) Delegates to core heatmap engine |
+| `tokenTrimmer.js` | (wrapper) Delegates to core tokenTrimmer engine |
+
+### Implementations (Personas)
+
+Implementations are predefined workflow packages combining custom engines, prompts, and configurations for specific domains.
+
+**`implementations/becca/`**
+- **Purpose:** Personal/daily journaling, summarization, and reflection
+- **Components:** Custom collectors, diary summarization engines
+- **Config:** `implementations/becca/config.json`, `implementations/becca/template.json`
+- **Key Files:** `bootstrapCollector.js`, source adapters for various input types
+
+**`implementations/deacon/`**
+- **Purpose:** Code analysis and documentation
+- **Components:** Custom code parsing engines, documentation generators
+- **Config:** `implementations/deacon/template.json`
+- **Key Files:** Custom engines in `implementations/deacon/engines/`
+
+**`implementations/free/`**
+- **Purpose:** Free/open-source reference implementation
+- **Components:** Basic collectors and summarizers
+- **Config:** `implementations/free/template.json`
+- **Use Case:** Starting point for custom implementations
+
+**`implementations/orion/`**
+- **Purpose:** Project and organizational analysis
+- **Components:** Project structure parsing, task aggregation, roadmap generation
+- **Config:** `implementations/orion/template.json`
+- **Key Files:** Custom engines in `implementations/orion/engines/`
+
+### Using Engines in Configs
+
+Engines are referenced in config files under `params.collectors`, `params.interpreters`, or `params.responders`:
+
+```json
+{
+  "persona": "free",
+  "params": {
+    "collectors": [
+      {
+        "engine": "documents.collector",
+        "seedDir": "./input"
+      }
+    ],
+    "interpreters": [
+      {
+        "engine": "chatgpt",
+        "inputType": "artifact",
+        "prompt": "Summarize these documents"
+      }
+    ],
+    "responders": [
+      {
+        "engine": "default",
+        "outputType": "file",
+        "filename": "analysis.md"
+      }
+    ]
+  }
+}
+```
+
+### Custom Engines
+
+To create a custom engine, implement the standard interface:
+
+```javascript
+module.exports = {
+  async run(ctx, engineCfg, personaCfg) {
+    // ctx.passedFiles: array of { name, type, documents: [{ filename, content }] }
+    // engineCfg: configuration from the config.json
+    // personaCfg: full persona configuration
+    
+    // Process data, modify ctx.passedFiles as needed
+    ctx.passedFiles.push({
+      name: 'my-result',
+      type: 'custom',
+      documents: [{ 
+        filename: 'output.md', 
+        content: 'Analysis result...' 
+      }]
+    });
+  }
+};
+```
+
 ---
 
 ### Summary

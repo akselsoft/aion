@@ -8,7 +8,9 @@ const openai = new OpenAI({
 
 // Generates the system prompt from config and section-level prompts
 function generateSystemPrompt(config, prompts) {
-    let systemPrompt = config.chatgpt?.systemPrompt || `
+    let systemPrompt = config.chatgpt?.systemPrompt || ``.trim();
+
+    /*
 You are reviewing a collection of content files. Your tasks are to:
 
 1. Summarize the main purpose and content.
@@ -16,12 +18,11 @@ You are reviewing a collection of content files. Your tasks are to:
 3. Suggest relevant follow-up actions or questions if helpful.
 
 Be clear, concise, and context-aware. Avoid repeating known information unnecessarily.
-`.trim();
+*/
+
 
     if (prompts.length > 0) {
         systemPrompt += `
-
-The following are section-specific instructions to guide interpretation:
 ${prompts.join('\n\n')}
 `;
     }
@@ -47,16 +48,14 @@ function flattenSections(nodes, pathPrefix = []) {
 }
 // Combines section content and extracts section-specific prompts
 function generateFullInputAndPrompts(data, config) {
-    const prompts = [];
+    const prompts = []; // keep empty to avoid duplicating section prompts in the system header
+    const seenPrompts = new Set();
 
     const allSections = flattenSections(data).map(section => {
-        const prompt = section.prompt?.trim() || '';
-
-        /*const docs = section.documents
-            ?.filter(d => d.content)
-            .map(d => (d.filename ? `${d.filename}\n\n${d.content}` : d.content))
-            .join('\n\n') || '';
-*/
+        let prompt = section.prompt?.trim() || '';
+        const inlinePrompt = prompt; // keep a copy to render with the section content
+        // We no longer inject section prompts into the system header; keep them inline only.
+        prompt = '';
 
         const docs = section.documents
             ?.filter(d => d.content)
@@ -78,9 +77,11 @@ function generateFullInputAndPrompts(data, config) {
 
         let sectionBlock = "### " + section.name + "\n\n";
 
-        if (prompt) {
-            sectionBlock += `Context: ${prompt}\n\n`;
+        // Render the section-level prompt inline so debug inputs keep context.
+        if (inlinePrompt) {
+            sectionBlock += `**Prompt:** ${inlinePrompt}\n\n`;
         }
+
         sectionBlock += `\n${docs}\n\r`.trim();
         return sectionBlock + '\n\r';
 
@@ -89,7 +90,7 @@ function generateFullInputAndPrompts(data, config) {
     const postPrompt = config?.chatgpt?.prompts?.postPrompt?.trim() ||
         'Ensure the summary is concise and actionable. It is critical that recommendations will result in success.';
 
-    const fullInput = allSections.join('\n\n---\n\n').trim() + `\n\nRule of Thumb\n${postPrompt}\r`;
+    const fullInput = allSections.join('\n\n---\n\n').trim() + `\n\n## Note to Interpeter: Rule of Thumb\n${postPrompt}\r`;
     return { fullInput, prompts };
 
 }
@@ -97,6 +98,10 @@ function generateFullInputAndPrompts(data, config) {
 async function chatgptEngine(data, config, projectRoot) {
     const model = config.chatgpt?.model || 'gpt-4';
     const temperature = config.chatgpt?.temperature ?? 0.3;
+    const writeInput = config.chatgpt?.writeInput !== false;
+    const writeOutputs = config.chatgpt?.writeOutputs !== false;
+    const inputFilename = config.chatgpt?.inputFilename || 'chatgpt-input.md';
+    const summaryFilename = config.chatgpt?.summaryFilename || 'summary.md';
     console.log(`project root is: ${projectRoot}`);
 
     const { fullInput, prompts } = generateFullInputAndPrompts(data, config);
@@ -110,12 +115,15 @@ async function chatgptEngine(data, config, projectRoot) {
     }
 
     const systemPrompt = generateSystemPrompt(config, prompts);
-    const inputPath = path.join(projectRoot, 'outputs', 'chatgpt-input.md');
-    fs.mkdirSync(path.dirname(inputPath), { recursive: true });
-    fs.writeFileSync(inputPath, systemPrompt + "\n\n" + fullInput, 'utf-8');
-    console.log(`📝 ChatGPT input written to ${path.relative(projectRoot, inputPath)}`);
+    const inputPath = path.join(projectRoot, 'outputs', inputFilename);
+    if (writeInput) {
+        fs.mkdirSync(path.dirname(inputPath), { recursive: true });
+        fs.writeFileSync(inputPath, systemPrompt + "\n\n" + fullInput, 'utf-8');
+        console.log(`📝 ChatGPT input written to ${path.relative(projectRoot, inputPath)}`);
+    }
 
     try {
+        console.log(`🚀 Sending to OpenAI (model=${model}, temp=${temperature})...`);
         const response = await openai.chat.completions.create({
             model,
             temperature,
@@ -124,6 +132,7 @@ async function chatgptEngine(data, config, projectRoot) {
                 { role: 'user', content: fullInput },
             ],
         });
+        console.log('✅ Received response from OpenAI.');
 
         // Save raw input for debugging
         const result = response.choices?.[0]?.message?.content?.trim() || null;
@@ -136,58 +145,61 @@ async function chatgptEngine(data, config, projectRoot) {
                 generatedBy: 'chatgpt',
             });
 
-            // Original summary path
-            const summaryPath = path.join(projectRoot, 'outputs', 'summary.md');
-            fs.mkdirSync(path.dirname(summaryPath), { recursive: true });
-            fs.writeFileSync(summaryPath, result, 'utf-8');
-            console.log(`✅ Summary written to: ${summaryPath}`);
+            if (writeOutputs) {
+                // Original summary path (configurable)
+                const summaryPath = path.join(projectRoot, 'outputs', summaryFilename);
+                fs.mkdirSync(path.dirname(summaryPath), { recursive: true });
+                fs.writeFileSync(summaryPath, result, 'utf-8');
+                console.log(`✅ Summary written to: ${summaryPath}`);
 
-            // New history paths
-            const historyDir = path.join(projectRoot, 'history');
-            fs.mkdirSync(historyDir, { recursive: true });
+                // New history paths
+                const historyDir = path.join(projectRoot, 'history');
+                fs.mkdirSync(historyDir, { recursive: true });
 
-            // Now generate a brief summary of the full summary
-            // Use custom brief prompt if provided
-            const briefPrompt = config.chatgpt?.prompts?.summaryBrief?.trim() ||
-                'Summarize the following report into 3-4 sentences. You don\'t need to include the charter. This will be used as brief context in future runs.';
+                // Now generate a brief summary of the full summary
+                // Use custom brief prompt if provided
+                const briefPrompt = config.chatgpt?.prompts?.summaryBrief?.trim() ||
+                    'Summarize the following report into 3-4 sentences. You don\'t need to include the charter. This will be used as brief context in future runs.';
 
-            try {
-                const briefResponse = await openai.chat.completions.create({
-                    model,
-                    temperature,
-                    messages: [
-                        {
-                            role: 'system',
-                            content: briefPrompt
-                        },
-                        {
-                            role: 'user',
-                            content: result
-                        }
-                    ]
-                });
+                try {
+                    console.log('🚀 Sending brief summary request to OpenAI...');
+                    const briefResponse = await openai.chat.completions.create({
+                        model,
+                        temperature,
+                        messages: [
+                            {
+                                role: 'system',
+                                content: briefPrompt
+                            },
+                            {
+                                role: 'user',
+                                content: result
+                            }
+                        ]
+                    });
+                    console.log('✅ Received brief summary response.');
 
-                const brief = briefResponse.choices?.[0]?.message?.content?.trim() || '';
+                    const brief = briefResponse.choices?.[0]?.message?.content?.trim() || '';
 
-                if (brief) {
-                    const briefPath = path.join(historyDir, 'summary-brief.md');
-                    fs.writeFileSync(briefPath, brief, 'utf-8');
-                    console.log(`🧠 Brief summary written to: ${briefPath}`);
+                    if (brief) {
+                        const briefPath = path.join(historyDir, 'summary-brief.md');
+                        fs.writeFileSync(briefPath, brief, 'utf-8');
+                        console.log(`🧠 Brief summary written to: ${briefPath}`);
+                    }
+                } catch (briefErr) {
+                    console.warn(`⚠️ Failed to generate summary-brief.md: ${briefErr.message}`);
                 }
-            } catch (briefErr) {
-                console.warn(`⚠️ Failed to generate summary-brief.md: ${briefErr.message}`);
+
+                const dateStr = new Date().toISOString().split('T')[0]; // e.g., "2024-07-22"
+                const datedPath = path.join(historyDir, `${dateStr}.md`);
+                const latestPath = path.join(historyDir, 'summary.md');
+
+                fs.writeFileSync(datedPath, result, 'utf-8');
+                fs.writeFileSync(latestPath, result, 'utf-8');
+
+                console.log(`📚 Dated summary written to: ${datedPath}`);
+                console.log(`📄 Latest summary copied to: ${latestPath}`);
             }
-
-
-            const dateStr = new Date().toISOString().split('T')[0]; // e.g., "2024-07-22"
-            const datedPath = path.join(historyDir, `${dateStr}.md`);
-            const latestPath = path.join(historyDir, 'summary.md');
-
-            fs.writeFileSync(datedPath, result, 'utf-8');
-            fs.writeFileSync(latestPath, result, 'utf-8');
-
-            console.log(`📚 Dated summary written to: ${datedPath}`);
-            console.log(`📄 Latest summary copied to: ${latestPath}`);
         }
 
         return data;

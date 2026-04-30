@@ -162,11 +162,36 @@ async function convertXlsxToOutputs(filePath, excelFormat = 'md') {
 
 module.exports = async function loadDocumentsSource(projectRoot, sourceConfig) {
   const folderPath = path.join(projectRoot, sourceConfig.location);
+  const debug = !!sourceConfig.debug;
   const copyToArtifacts = !!sourceConfig.config?.copyToArtifacts;
   const recurse = !!sourceConfig.recurse;
   const targetFormat = (sourceConfig.format || sourceConfig.target || 'md').toLowerCase(); // 'md' or 'json'
 
-  const files = await fs.readdir(folderPath).catch(() => []);
+  if (debug) {
+    console.log(`🔍 [documents loader] Starting scan of: ${folderPath}`);
+    console.log(`🔍 [documents loader] Recurse: ${recurse}, Format: ${targetFormat}`);
+  }
+
+  // Check if folder exists
+  const folderExists = fssync.existsSync(folderPath);
+  if (debug) {
+    console.log(`🔍 [documents loader] Folder exists: ${folderExists}`);
+  }
+
+  if (!folderExists) {
+    console.warn(`⚠️  [documents loader] Folder not found: ${folderPath}`);
+    return { name: sourceConfig.name || 'documents', prompt: '', documents: [] };
+  }
+
+  const files = await fs.readdir(folderPath).catch((err) => {
+    if (debug) console.error(`❌ [documents loader] Error reading directory: ${err.message}`);
+    return [];
+  });
+  
+  if (debug) {
+    console.log(`🔍 [documents loader] Files in folder: ${files.join(', ') || '(empty)'}`);
+  }
+
   const promptText = resolvePrompt(folderPath, sourceConfig, files);
 
   // Identify candidate files
@@ -179,6 +204,13 @@ module.exports = async function loadDocumentsSource(projectRoot, sourceConfig) {
     filePaths = (await fs.readdir(folderPath))
       .filter(name => allowed.some(ext => name.toLowerCase().endsWith(ext)))
       .map(name => path.join(folderPath, name));
+  }
+
+  if (debug) {
+    console.log(`🔍 [documents loader] Found ${filePaths.length} candidate file(s)`);
+    filePaths.forEach((fp, idx) => {
+      console.log(`  [${idx + 1}] ${path.basename(fp)}`);
+    });
   }
 
   const documents = [];

@@ -247,6 +247,7 @@ These engines send content to various LLM providers for analysis and synthesis.
   "model": "gpt-4",
   "temperature": 0.3,
   "maxTokens": 4096,
+  "tokenLimit": 12000,
   "inputType": "artifact",
   "outputType": "ChatGPT",
   "writeInput": true,
@@ -254,6 +255,65 @@ These engines send content to various LLM providers for analysis and synthesis.
   "prompt": "Your analysis prompt here"
 }
 ```
+
+For the `ollama` wrapper, `tokenLimit` (or `tokenlimit`) can be used to split oversized inputs before the request is sent. AION estimates the prompt size after `inputType` and `inputFileTypes` filtering. If the total is above the limit and there are multiple matching `passedFiles` entries, it sends one Ollama request per matching entry, preserving that entry's prompt, then concatenates the responses with separators. Splitting only happens at the `passedFiles` entry boundary; a single oversized entry is still sent as one call.
+
+### Common Free/Built-in Data Engines
+
+`sql.collector`
+
+- Purpose: run a SQL query and add the JSON result directly into `ctx.passedFiles`.
+- Config:
+
+```json
+{
+  "engine": "sql.collector",
+  "codeType": "js",
+  "name": "orders",
+  "client": "postgres",
+  "connection": {
+    "host": "localhost",
+    "port": 5432,
+    "user": "app",
+    "password": "secret",
+    "database": "sales"
+  },
+  "query": "select id, status, total from orders where status = 'open'",
+  "outputType": "orders-json"
+}
+```
+
+- Output shape in `passedFiles`: one JSON document with `{ rows: [...], rowCount: N }`.
+- Supported clients: `postgres`, `mssql`, `mysql`, `sqlite`.
+- Driver note: database drivers are loaded optionally at runtime. Install the matching package before use:
+  `pg`, `mssql`, `mysql2`, `better-sqlite3` or `sqlite3`.
+
+`json-evaluator`
+
+- Purpose: evaluate JSON data already present in `passedFiles`, then emit a new JSON result bundle under `outputType`.
+- Config:
+
+```json
+{
+  "engine": "json-evaluator",
+  "codeType": "js",
+  "inputType": "orders-json",
+  "outputType": "open-order-count",
+  "action": "count",
+  "filters": [
+    { "attribute": "status", "operator": "=", "value": "open" }
+  ]
+}
+```
+
+- Supported actions: `count`, `sum`, `avg`, `min`, `max`, `distinct`, `pluck`.
+- `field` is required for all actions except `count`.
+- `group` accepts one or more attributes and returns grouped results.
+- `groupFilter` applies after grouping against the grouped output rows.
+- Result behavior:
+  if the result is a single scalar, `result` is that scalar;
+  if grouped output has one row, `result` is that row object;
+  if multiple grouped rows exist, `result` is an array.
 
 ### Core Utility Engines (`core/engines/`)
 

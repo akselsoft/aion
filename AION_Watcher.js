@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 // Polling-based watcher that runs runner.js when files change inside a folder.
 // Accepts (legacy): watchDir, configPath
-// Map mode: watchDir, mapPath (JSON array of { folder, config, ignore?, include?, requireFiles? })
-// Optional flags: {intervalMs, debounceMs, ignore}
+// Map mode: watchDir, mapPath (JSON array of { folder, config, interval?, ignore?, include?, runOnEmpty?, requireFiles? })
+// Optional flags: --interval=minutes, --debounce=ms
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 
-const DEFAULT_INTERVAL_MS = 1500; // how often to scan for changes
+const DEFAULT_INTERVAL_MS = 60000; // scan once per minute
 const DEFAULT_DEBOUNCE_MS = 750; // delay to coalesce rapid edits
 const DEFAULT_IGNORE = ['node_modules', '.git', '.DS_Store', 'tmp', 'dist'];
 
@@ -149,6 +149,7 @@ function startWatcher(watchDir, configPath, options = {}) {
 
         async function start() {
             baselineHash = await hashTree(watchDir, ignore);
+            console.log(`Checking for changes every ${formatDuration(intervalMs)}.`);
             timer = setInterval(tick, intervalMs);
         }
 
@@ -164,14 +165,14 @@ function startWatcher(watchDir, configPath, options = {}) {
     }
 
     // Map mode: watch multiple folders and trigger only their mapped configs
-    const mapEntries = loadMap(configPath, watchDir);
+    const mapEntries = loadMap(configPath, watchDir, intervalMs);
     const timers = [];
 
     async function tickEntry(entry) {
         try {
             const currentHash = await hashTree(entry.folderAbs, entry.ignore, entry.include);
             if (entry.baselineHash && currentHash !== entry.baselineHash) {
-                const shouldRun = !entry.requireFiles ||
+                const shouldRun = entry.runOnEmpty ||
                     (await countTreeFiles(entry.folderAbs, entry.ignore, entry.include)) > 0;
                 if (shouldRun) {
                     if (entry.debounceTimer) clearTimeout(entry.debounceTimer);
@@ -190,7 +191,8 @@ function startWatcher(watchDir, configPath, options = {}) {
             entry.baselineHash = await hashTree(entry.folderAbs, entry.ignore, entry.include);
         }));
         for (const entry of mapEntries) {
-            const t = setInterval(() => tickEntry(entry), intervalMs);
+            console.log(`Checking ${path.basename(entry.configAbs)} every ${formatDuration(entry.intervalMs)}.`);
+            const t = setInterval(() => tickEntry(entry), entry.intervalMs);
             timers.push(t);
         }
     }
@@ -217,7 +219,7 @@ function isMapFile(p) {
     }
 }
 
-function loadMap(mapPath, watchDir) {
+function loadMap(mapPath, watchDir, defaultIntervalMs = DEFAULT_INTERVAL_MS) {
     const full = path.resolve(mapPath);
     const baseDir = path.dirname(full);
     const raw = fs.readFileSync(full, 'utf8');
@@ -236,25 +238,97 @@ function loadMap(mapPath, watchDir) {
         const include = Array.isArray(entry.include)
             ? entry.include.map(p => String(p).split(path.sep).join('/'))
             : [];
-        return { folderAbs, configAbs, ignore: entryIgnore, include, requireFiles: entry.requireFiles === true, baselineHash: null, debounceTimer: null };
+        const runOnEmpty = entry.runOnEmpty ?? entry.RunOnEmpty ?? (entry.requireFiles === true ? false : true);
+        const intervalMs = parseMapIntervalMs(entry, defaultIntervalMs);
+        return { folderAbs, configAbs, ignore: entryIgnore, include, runOnEmpty, intervalMs, baselineHash: null, debounceTimer: null };
     });
 }
 
-if (require.main === module) {
-    const [watchDirArg, configArg] = process.argv.slice(2);
-    if (!watchDirArg || !configArg) {
-        console.error('Usage: node AION_Watcher.js <watchDir> <configPath|mapPath> [--interval=ms] [--debounce=ms]');
-        process.exit(1);
+function parseMapIntervalMs(entry, defaultIntervalMs) {
+    const minutes = entry.interval ?? entry.intervalMinutes ?? entry.intervalMins;
+    const parsed = Number(minutes);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed * 60 * 1000 : defaultIntervalMs;
+}
+
+function formatDuration(ms) {
+    const minutes = ms / (60 * 1000);
+    if (Number.isInteger(minutes)) return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+    const seconds = ms / 1000;
+    if (Number.isInteger(seconds)) return `${seconds} second${seconds === 1 ? '' : 's'}`;
+    return `${ms} ms`;
+}
+
+function usage() {
+    return 'Usage: node AION_Watcher.js <watchDir> <configPath|mapPath> [--interval=minutes] [--debounce=ms]';
+}
+
+function printCliError(message, example) {
+    console.error(message);
+    console.error(usage());
+    if (example) {
+        console.error(`Example: ${example}`);
+    }
+}
+
+function parseCliArgs(argv) {
+    const positional = [];
+    const opts = {};
+
+    for (const arg of argv) {
+        if (arg.startsWith('--interval=') || arg.startsWith('--internval=')) {
+            opts.intervalMs = Number(arg.split('=')[1]) * 60 * 1000;
+            continue;
+        }
+        if (arg.startsWith('--debounce=')) {
+            opts.debounceMs = Number(arg.split('=')[1]);
+            continue;
+        }
+        positional.push(arg);
     }
 
-    const opts = {};
-    for (const arg of process.argv.slice(4)) {
-        if (arg.startsWith('--interval=')) opts.intervalMs = Number(arg.split('=')[1]);
-        if (arg.startsWith('--debounce=')) opts.debounceMs = Number(arg.split('=')[1]);
+    return { positional, opts };
+}
+
+if (require.main === module) {
+    const { positional, opts } = parseCliArgs(process.argv.slice(2));
+    const [watchDirArg, configArg] = positional;
+    if (!watchDirArg || !configArg) {
+        console.error(usage());
+        process.exit(1);
     }
 
     const watchDir = path.resolve(watchDirArg);
     const configPath = path.resolve(configArg);
+    const watchDirExists = fs.existsSync(watchDir);
+    const watchDirIsDirectory = watchDirExists && fs.statSync(watchDir).isDirectory();
+    const configLooksLikeLegacyFlag = /^(--)?(interval|internval|debounce)=\d+$/i.test(configArg);
+
+    if (configLooksLikeLegacyFlag) {
+        printCliError(
+            `Invalid config path: "${configArg}" was parsed as the second positional argument, not as an option.`,
+            `node AION_Watcher.js . ${watchDirArg} --${configArg.replace(/^--/, '')}`
+        );
+        process.exit(1);
+    }
+
+    if (!watchDirExists) {
+        printCliError(`Watch path does not exist: ${watchDir}`, `node AION_Watcher.js . ${configArg} --interval=1`);
+        process.exit(1);
+    }
+
+    if (!watchDirIsDirectory) {
+        const looksLikeMapFile = isMapFile(watchDir);
+        const example = looksLikeMapFile
+            ? `node AION_Watcher.js . ${watchDirArg} --interval=1`
+            : null;
+        printCliError(`Watch path must be a directory, but got a file: ${watchDir}`, example);
+        process.exit(1);
+    }
+
+    if (!fs.existsSync(configPath)) {
+        printCliError(`Config path does not exist: ${configPath}`);
+        process.exit(1);
+    }
 
     if (isMapFile(configPath)) {
         console.log(`Watching ${watchDir} with map ${configPath}`);

@@ -44,7 +44,7 @@ function generateFullInputAndPrompts(data, config) {
 
         const docs = section.documents
             ?.filter(d => d.content)
-            .map(d => (d.filename ? `${d.content}` : d.content))
+            .map(d => renderDocumentContent(d, config))
             .join('\n\n') || '';
 
         console.log(`📄 Section: ${section.name} - ${section.documents.length} documents - Prompt: ${prompt ? prompt : 'No prompt provided'}`);
@@ -65,11 +65,61 @@ function generateFullInputAndPrompts(data, config) {
 
     }).filter(Boolean);
 
-    const postPrompt = config?.ollama?.prompts?.postPrompt?.trim() ||
-        'Ensure the summary is concise and actionable. It is critical that recommendations will result in success.';
+    const postPrompt = config?.ollama?.prompts?.postPrompt?.trim() || '';
 
-    const fullInput = allSections.join('\n\n---\n\n').trim() + `\n\n## Note to Interpreter: Rule of Thumb\n${postPrompt}\r`;
+    const fullInput = [
+        allSections.join('\n\n---\n\n').trim(),
+        postPrompt ? `## Note to Interpreter: Rule of Thumb\n${postPrompt}\r` : ''
+    ].filter(Boolean).join('\n\n');
     return { fullInput, prompts };
+}
+
+function renderDocumentContent(doc, config) {
+    const content = doc?.content || '';
+    if (config?.ollama?.plaintext !== true) return content;
+
+    const parsed = doc?.json !== undefined ? doc.json : parseJsonContent(content);
+    if (parsed === null) return content;
+
+    return jsonToPlaintext(parsed);
+}
+
+function parseJsonContent(content) {
+    try {
+        return JSON.parse(content);
+    } catch {
+        return null;
+    }
+}
+
+function jsonToPlaintext(value, depth = 0) {
+    if (value === null || value === undefined) return '';
+    if (typeof value !== 'object') return String(value);
+
+    if (Array.isArray(value)) {
+        return value.map(item => jsonToPlaintext(item, depth)).filter(Boolean).join('\n\n');
+    }
+
+    if (value.file && Array.isArray(value.blocks)) {
+        const blocks = value.blocks.map(block => {
+            const label = block.index ? `Block ${block.index}:` : 'Block:';
+            return [label, jsonToPlaintext(block.content ?? block, depth + 1)].filter(Boolean).join('\n');
+        });
+        return [`### ${value.file}`, ...blocks].filter(Boolean).join('\n\n');
+    }
+
+    return Object.entries(value)
+        .map(([key, child]) => {
+            const rendered = jsonToPlaintext(child, depth + 1);
+            if (!rendered) return `${key}:`;
+            if (typeof child === 'object') return `${key}:\n${indent(rendered)}`;
+            return `${key}: ${rendered}`;
+        })
+        .join('\n');
+}
+
+function indent(text) {
+    return String(text).split('\n').map(line => line ? `  ${line}` : line).join('\n');
 }
 
 async function ollamaEngine(data, config, projectRoot) {

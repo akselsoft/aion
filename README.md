@@ -14,6 +14,84 @@ The Respond phase takes the information from the previous phase and acts on them
 
 These processes are defined by a configuration file that specifies the order and any additional attributes related to an individual phase. The configuration file has a standard format. The tool that reads and executes the content may be written in any tool.
 
+### Twilio SMS responder
+
+The built-in `sms` responder can send the content produced by an earlier engine. Set the producer's `outputType`, then point the responder's `inputType` at that value:
+
+```json
+{
+  "interpreters": [
+    {
+      "engine": "ollama",
+      "codeType": "js",
+      "enabled": true,
+      "name": "daily-ollama",
+      "inputType": "reviewContent",
+      "outputType": "SMSOutput",
+      "model": "llama3.2",
+      "temperature": 0.3,
+      "prompt": "Provide a single grade of the content generated."
+    }
+  ],
+  "responders": [
+    {
+      "engine": "sms",
+      "codeType": "js",
+      "enabled": true,
+      "provider": "twilio",
+      "inputType": "SMSOutput",
+      "phoneNumber": "+15555555555",
+      "maxLength": 320
+    }
+  ]
+}
+```
+
+Twilio sends require the optional `twilio` package and `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_PHONE_NUMBER` environment variables. Use `"dryRun": true` to verify the selected message without sending a text.
+
+### Email responder
+
+The built-in `email` responder can send the content produced by an earlier engine. Set the producer's `outputType`, then point the responder's `inputType` at that value:
+
+```json
+{
+  "engine": "email",
+  "codeType": "js",
+  "enabled": true,
+  "provider": "sendgrid",
+  "inputType": "Weekly",
+  "to": "andrew@example.com",
+  "from": "verified-sender@example.com",
+  "subject": "Weekly Direction",
+  "emailTitle": "Weekly Direction",
+  "sendOnDOW": 2
+}
+```
+
+Email sends can use SMTP or SendGrid:
+
+- SendGrid: set `provider: "sendgrid"` and provide `SENDGRID_API_KEY`. The `from` value, or `EMAIL_FROM`, must be a verified SendGrid sender.
+- SMTP: set `provider: "smtp"` and provide `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, and optionally `SMTP_PORT` and `EMAIL_FROM`.
+
+Scheduling is optional. If no schedule field is set, the email responder sends whenever the pipeline runs and matching `inputType` content exists. When `sendOnDOW` is set, email is only sent on matching days where `1=Sunday`, `2=Monday`, ..., `7=Saturday`. The responder also accepts `sendOnDow`, `sendOnDayOfWeek`, `sendOnDays`, or `sendOn`; values may be numbers, day names, or arrays such as `"Monday"` or `[2, 6]`.
+
+### PowerPoint responder
+
+The built-in `powerpoint` responder creates `.pptx` files from an earlier engine's output. It accepts either a JSON collection like `[{ "name": "Accomplishments", "content": ["A", "B"] }]` or markdown sections with headings and bullets.
+
+```json
+{
+  "engine": "powerpoint",
+  "codeType": "js",
+  "enabled": true,
+  "inputType": "WeeklyPresentation",
+  "title": "Weekly Direction",
+  "filename": "~/Documents/Daily/Summaries/Weekly-Direction.pptx"
+}
+```
+
+The generated deck includes a title slide and one slide per collection item or markdown section.
+
 This may be easier to understand by walking through an example using some simple engines or implementations for each phase.
 
 Imagine a folder structure that contains different files. You have a folder for meetings, budgets and code.  You also use a Task-based system like Azure DevOps.
@@ -145,12 +223,12 @@ node AION_Watcher.js <watchDir> <configPath> [options]
 
 Example with parameters:
 ```bash
-node AION_Watcher.js ./project project/config.json --interval=5000 --debounce=1500
+node AION_Watcher.js ./project project/config.json --interval=1 --debounce=1500
 ```
 
 **Map mode (recommended for multiple independent projects/domains)**
 
-When monitoring multiple separate directories, each with its own config file, use a watch-map JSON file to define the folder-to-config mappings.
+When monitoring multiple separate directories, each with its own config file, use a watch-map JSON file to define the folder-to-config mappings. A map can also include `idle-time` entries that run a config after the watcher has been quiet for a configured duration.
 
 1. Create a watch-map file (e.g., `workspace/watch-map.json`):
 ```json
@@ -158,13 +236,21 @@ When monitoring multiple separate directories, each with its own config file, us
   { "folder": "project-a", "config": "project-a/config.json" },
   { "folder": "project-b", "config": "project-b/config.json" },
   { "folder": "project-c", "config": "project-c/config.json" },
-  { "folder": "research/papers", "config": "research/papers-config.json" }
+  { "folder": "research/papers", "config": "research/papers-config.json" },
+  { "type": "idle-time", "name": "quiet-review", "idleHours": 4, "config": "daily/idle-time.json" }
 ]
 ```
 
 Field descriptions:
 - `folder`: Directory to monitor for changes (relative to the directory containing the watch-map file, or use absolute paths).
 - `config`: AION config file to execute when this folder changes (relative to the map file directory, or use absolute paths).
+- `type: "idle-time"`: Runs the mapped `config` when no config has completed for the configured idle duration.
+- `idleHours`, `idleMinutes`, or `idleMs`: Idle duration for an `idle-time` entry.
+- `interval`: Optional per-entry scan interval. Defaults to minutes.
+- `intervalType`: Optional unit for `interval`; supports `minutes`, `hours`, `days`, `weeks`, or `months`. For example, use `{ "interval": 3, "intervalType": "months" }` for a quarterly scan.
+- `include`: Optional list of files or relative paths inside `folder` that should count as changes.
+- `ignore`: Optional list of names to ignore in addition to the default ignored names.
+- `runOnEmpty`: Set to `false` when an empty folder should not trigger a run.
 
 2. Start the watcher with the map file:
 ```bash
@@ -173,13 +259,13 @@ node AION_Watcher.js <rootDir> <watchMapPath> [options]
 
 Example:
 ```bash
-node AION_Watcher.js . workspace/watch-map.json --interval=3000 --debounce=1000
+node AION_Watcher.js . workspace/watch-map.json --interval=1 --debounce=1000
 ```
 
 **Parameters**
 
-- `--interval` (default: 2000ms)  
-  How often to scan folders for changes. Smaller values = more responsive but higher CPU usage.
+- `--interval` (default: 1 minute)
+  How often to scan folders for changes, in minutes. Smaller values = more responsive but higher CPU usage.
 
 - `--debounce` (default: 750ms)  
   Time to wait after detecting a change before triggering a config run. Prevents rapid re-triggering if multiple files change in quick succession.
@@ -197,7 +283,7 @@ Given this watch-map structure:
 
 and you run:
 ```bash
-node AION_Watcher.js . watch-map.json --interval=3000 --debounce=1000
+node AION_Watcher.js . watch-map.json --interval=1 --debounce=1000
 ```
 
 **What happens:**
@@ -208,13 +294,17 @@ node AION_Watcher.js . watch-map.json --interval=3000 --debounce=1000
 4. When a file in `Book-analysis/` changes → runs `Book-analysis/config.json`
 5. When a file in `project/` changes → runs `project/config.json`
 6. Changes are debounced by 1 second, so if 5 files change in 500ms, only one run is triggered
-7. Scans for new changes every 3 seconds
+7. Scans for new changes every 1 minute
 
 **Behavior Notes**
 
 - Each mapped folder's state is hashed independently; only its matching config executes when that folder changes
+- The watcher writes a sidecar state file named `<watch-map>.state.json`
+- The state file records `lastRunAt`, the last completed config, per-config run times, idle-time runs, and per-folder hashes
+- On restart, persisted hashes let the watcher detect files that changed while it was stopped
+- An `idle-time` entry runs only after the configured idle duration has elapsed since the last completed config run
 - Runs are queued and processed sequentially to prevent race conditions or redundant API calls
-- Default ignored patterns: `node_modules`, `.git`, `.DS_Store`, `tmp`, `dist`, `outputs`, `history`
+- Default ignored patterns: `node_modules`, `.git`, `.DS_Store`, `tmp`, `dist`
 - The watcher continues running until manually stopped (Ctrl+C)
 - Each run logs timestamp, folder detected, and config being executed
 
@@ -256,9 +346,38 @@ These engines send content to various LLM providers for analysis and synthesis.
 }
 ```
 
-For the `ollama` wrapper, `tokenLimit` (or `tokenlimit`) can be used to split oversized inputs before the request is sent. AION estimates the prompt size after `inputType` and `inputFileTypes` filtering. If the total is above the limit and there are multiple matching `passedFiles` entries, it sends one Ollama request per matching entry, preserving that entry's prompt, then concatenates the responses with separators. Splitting only happens at the `passedFiles` entry boundary; a single oversized entry is still sent as one call.
+For the `ollama` wrapper, `tokenLimit` (or `tokenlimit`) controls oversized-input handling. AION first estimates the combined input. If it fits, everything is sent as one request with the final prompt. If it exceeds the limit, AION estimates each file independently: files that fit pass through unchanged, while oversized files are split and compressed with a lightweight fact-preserving prompt. The compressed and pass-through files are then assembled with the final prompt and sent to Ollama once.
+
+Set `"plaintext": true` on an `ollama` engine to render JSON input documents as readable text before sending them to Ollama. The default is `false`, which preserves the existing raw JSON formatting.
 
 ### Common Free/Built-in Data Engines
+
+`artifacts`
+
+- Purpose: collect files into `ctx.passedFiles` from either a single file, a directory, or a simple wildcard path.
+- `baseDir` may be:
+  - A file: `Daily/Summaries/Daily.md`
+  - A directory: `Daily/Summaries`
+  - A wildcard file pattern in one directory: `Daily/Summaries/Daily*.md`
+- Time filters:
+  - `sinceDays`: include files updated within the last N days
+  - `sinceHours`: include files updated within the last N hours
+  - `sinceMs`: include files updated within the last N milliseconds
+  - `sinceLastRun`: include files updated since the previous artifact run
+  - `freshPeriod`: include files updated in the current `day`, `week`, `month`, or `quarter`
+- Example:
+
+```json
+{
+  "engine": "artifacts",
+  "codeType": "js",
+  "name": "daily-summary",
+  "baseDir": "~/Documents/Daily/Summaries/Daily*.md",
+  "sinceDays": 7,
+  "sort": "modified-asc",
+  "prompt": "Daily summary files updated in the past 7 days."
+}
+```
 
 `sql.collector`
 
@@ -315,6 +434,60 @@ For the `ollama` wrapper, `tokenLimit` (or `tokenlimit`) can be used to split ov
   if grouped output has one row, `result` is that row object;
   if multiple grouped rows exist, `result` is an array.
 
+`word-count`
+
+- Purpose: count words for documents in matching `passedFiles` entries and estimate page counts.
+- Requires `inputType`; emits a JSON array under `outputType`.
+- `wordsPerPage` defaults to `250`.
+- Optional filters: `sourceNames` and `itemNames`.
+- Example:
+
+```json
+{
+  "engine": "word-count",
+  "codeType": "js",
+  "inputType": "post-idea",
+  "outputType": "post-idea-count",
+  "wordsPerPage": 250
+}
+```
+
+Output document shape:
+
+```json
+[
+  {
+    "name": "A.md",
+    "wordcount": 200,
+    "pagecount": 1,
+    "filename": "A.md",
+    "itemName": "Ideas",
+    "sourceName": "post-ideas"
+  }
+]
+```
+
+`JSONDB`
+
+- Purpose: merge JSON topic records into current and long-term Daily database files.
+- Input records can include `topic`, `people`, `date`, `summary`, `detail summary`, `actionItems`, `priority`, and `tier`.
+- Config paths:
+  - `currentFile`: current topic snapshot
+  - `longTermFile`: accumulated topic history
+  - `peopleSummaryFile`: optional generated Markdown summary of each person's latest mention/contact date, useful for weekly relationship planning
+- Example:
+
+```json
+{
+  "engine": "JSONDB",
+  "codeType": "js",
+  "inputType": "db-input",
+  "currentFile": "~/Documents/Daily/Database/Current.json",
+  "longTermFile": "~/Documents/Daily/Database/LongTerm.json",
+  "peopleSummaryFile": "~/Documents/Daily/Summaries/People.md"
+}
+```
+
 ### Core Utility Engines (`core/engines/`)
 
 | Engine | Purpose |
@@ -339,13 +512,20 @@ Engines that ship with AION for data collection, transformation, and output.
 | Engine | Purpose |
 |--------|---------|
 | `artifacts.js` | Manages artifact files and metadata; supports JSON/CSV/Markdown |
+| `action-items.js` | Maintains an `Action-Items.md` table from collected context |
+| `action-items.collector.js` | Emits overdue, recurring, and upcoming action items for responders |
 | `dumpPassed.js` | Debug utility; writes current `ctx.passedFiles` to JSON for inspection |
+| `word-count.js` | Counts words per document and estimates page counts |
+| `JSONDB.js` | Maintains JSON topic databases and optional people contact summaries |
 | `lifelog.js` | Processes personal/daily log entries into structured summaries |
 
 **Responders & Utilities:**
 | Engine | Purpose |
 |--------|---------|
 | `default.js` | Default responder; writes outputs to files |
+| `email.js` | Sends responder output by SMTP or SendGrid; supports optional day-of-week scheduling |
+| `powerpoint.js` | Creates `.pptx` presentations from JSON collections or markdown sections |
+| `sms.js` | Sends responder output by SMS through Twilio or Vonage |
 | `notAuthorized.js` | Permission handler; skips execution if authorization fails |
 | `heatmap.js` | (wrapper) Delegates to core heatmap engine |
 | `tokenTrimmer.js` | (wrapper) Delegates to core tokenTrimmer engine |

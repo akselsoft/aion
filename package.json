@@ -5,16 +5,22 @@
     "main": "runner.js",
     "scripts": {
         "start": "node runner.js",
-        "dev": "NODE_ENV=development node runner.js"
+        "dev": "NODE_ENV=development node runner.js",
+        "test": "node --test AION_Watcher.test.js lib/impl/builtin/*.test.js implementations/deacon/sourceadapters/*.test.js",
+        "demo:ollama-cascade": "node runner.js ollama-cascade-test/config.json"
     },
     "dependencies": {
         "@dqbd/tiktoken": "^1.0.21",
+        "@sendgrid/mail": "^8.1.6",
+        "axios": "^1.16.0",
         "cheerio": "^1.1.2",
         "dotenv": "^16.6.1",
+        "jszip": "^3.10.1",
         "mammoth": "^1.6.0",
         "openai": "^4.104.0",
         "pdf-parse": "^1.1.1",
         "turndown": "^7.2.0",
+        "twilio": "^6.0.2",
         "xlsx": "^0.18.5"
     },
     "keywords": [],

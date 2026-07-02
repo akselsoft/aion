@@ -228,7 +228,7 @@ node AION_Watcher.js ./project project/config.json --interval=1 --debounce=1500
 
 **Map mode (recommended for multiple independent projects/domains)**
 
-When monitoring multiple separate directories, each with its own config file, use a watch-map JSON file to define the folder-to-config mappings. A map can also include `idle-time` entries that run a config after the watcher has been quiet for a configured duration.
+When monitoring multiple separate directories, each with its own config file, use a watch-map JSON file to define the folder-to-config mappings. A map can also include `idle-time` entries that run a config after the watcher has been quiet for a configured duration, or `schedule` entries that run a config on matching days without requiring a file change.
 
 1. Create a watch-map file (e.g., `workspace/watch-map.json`):
 ```json
@@ -237,6 +237,7 @@ When monitoring multiple separate directories, each with its own config file, us
   { "folder": "project-b", "config": "project-b/config.json" },
   { "folder": "project-c", "config": "project-c/config.json" },
   { "folder": "research/papers", "config": "research/papers-config.json" },
+  { "type": "schedule", "name": "monthly-backlog", "config": "gcbo/backlog-recommendations.json", "daysOfMonth": [1, 15, 30], "interval": 60, "intervalType": "minutes" },
   { "type": "idle-time", "name": "quiet-review", "idleHours": 4, "config": "daily/idle-time.json" }
 ]
 ```
@@ -245,6 +246,9 @@ Field descriptions:
 - `folder`: Directory to monitor for changes (relative to the directory containing the watch-map file, or use absolute paths).
 - `config`: AION config file to execute when this folder changes (relative to the map file directory, or use absolute paths).
 - `type: "idle-time"`: Runs the mapped `config` when no config has completed for the configured idle duration.
+- `type: "schedule"`: Runs the mapped `config` on matching calendar days even if no watched file changed. Scheduled entries run at most once per day.
+- `daysOfWeek`: Optional day-of-week list for scheduled entries, where `1=Sunday`, `2=Monday`, ..., `7=Saturday`.
+- `daysOfMonth`: Optional day-of-month list for scheduled entries, such as `[1, 15, 30]`. Use `"last"` for the last day of the month.
 - `idleHours`, `idleMinutes`, or `idleMs`: Idle duration for an `idle-time` entry.
 - `interval`: Optional per-entry scan interval. Defaults to minutes.
 - `intervalType`: Optional unit for `interval`; supports `minutes`, `hours`, `days`, `weeks`, or `months`. For example, use `{ "interval": 3, "intervalType": "months" }` for a quarterly scan.
@@ -338,6 +342,7 @@ These engines send content to various LLM providers for analysis and synthesis.
   "temperature": 0.3,
   "maxTokens": 4096,
   "tokenLimit": 12000,
+  "contextSize": 8192,
   "inputType": "artifact",
   "outputType": "ChatGPT",
   "writeInput": true,
@@ -347,6 +352,8 @@ These engines send content to various LLM providers for analysis and synthesis.
 ```
 
 For the `ollama` wrapper, `tokenLimit` (or `tokenlimit`) controls oversized-input handling. AION first estimates the combined input. If it fits, everything is sent as one request with the final prompt. If it exceeds the limit, AION estimates each file independently: files that fit pass through unchanged, while oversized files are split and compressed with a lightweight fact-preserving prompt. The compressed and pass-through files are then assembled with the final prompt and sent to Ollama once.
+
+For `ollama`, `contextSize` sets Ollama's model context window by sending `num_ctx` in the `/api/chat` request options. This is different from `tokenLimit`: `contextSize` controls Ollama runtime capacity, while `tokenLimit` controls AION's chunking/compression decision. `numCtx` and `num_ctx` are accepted as aliases, but `contextSize` is the recommended config name.
 
 Set `"plaintext": true` on an `ollama` engine to render JSON input documents as readable text before sending them to Ollama. The default is `false`, which preserves the existing raw JSON formatting.
 
@@ -363,8 +370,12 @@ Set `"plaintext": true` on an `ollama` engine to render JSON input documents as 
   - `sinceDays`: include files updated within the last N days
   - `sinceHours`: include files updated within the last N hours
   - `sinceMs`: include files updated within the last N milliseconds
-  - `sinceLastRun`: include files updated since the previous artifact run
+  - `sinceLastRun`: include files updated since the previous run for this collector scope
   - `freshPeriod`: include files updated in the current `day`, `week`, `month`, or `quarter`
+- `sinceLastRun` scopes default to config path + collector name + `baseDir`, so separate configs watching the same folder do not consume each other's cutoff. Use `lastRunKey` or `sinceLastRunKey` to intentionally share or customize the scope.
+- Scoped timestamps are stored in `.artifacts-last-run.json` under `scopes`; the top-level `lastRun` remains for visibility and older tooling.
+- `sortBy`: controls the document order in the artifact bundle. Use `filename` for filename order or `date` for modified-date order. `date` is the default.
+- `showFileName`: when `true`, downstream Ollama input prefixes each collected document with `---- File: <filename>`.
 - Example:
 
 ```json
@@ -374,7 +385,8 @@ Set `"plaintext": true` on an `ollama` engine to render JSON input documents as 
   "name": "daily-summary",
   "baseDir": "~/Documents/Daily/Summaries/Daily*.md",
   "sinceDays": 7,
-  "sort": "modified-asc",
+  "sortBy": "filename",
+  "showFileName": true,
   "prompt": "Daily summary files updated in the past 7 days."
 }
 ```
@@ -440,6 +452,10 @@ Set `"plaintext": true` on an `ollama` engine to render JSON input documents as 
 - Requires `inputType`; emits a JSON array under `outputType`.
 - `wordsPerPage` defaults to `250`.
 - Optional filters: `sourceNames` and `itemNames`.
+- Optional `ignore` array supports simple glob-style file patterns. Patterns are matched against document filename/name/title/path, and also against the basename for path values. For example:
+  - `*.notes.md` ignores `chapter.notes.md`
+  - `*questions.md` ignores both `questions.md` and `chapter.questions.md`
+- When `mergeExisting` is enabled, ignored rows are removed from the persisted count file as well as skipped from new counts.
 - Example:
 
 ```json
@@ -448,7 +464,27 @@ Set `"plaintext": true` on an `ollama` engine to render JSON input documents as 
   "codeType": "js",
   "inputType": "post-idea",
   "outputType": "post-idea-count",
-  "wordsPerPage": 250
+  "wordsPerPage": 250,
+  "ignore": ["*.notes.md", "*questions.md"]
+}
+```
+
+Book/content review example:
+
+```json
+{
+  "engine": "word-count",
+  "codeType": "js",
+  "enabled": true,
+  "name": "content-review-word-count",
+  "inputType": "artifact",
+  "outputType": "content-review-count",
+  "sourceNames": ["content-recent"],
+  "wordsPerPage": 250,
+  "persistJsonFile": "~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Patterns of Existence/Discussions/wordcontent.json",
+  "mergeExisting": true,
+  "mergeKey": "filename",
+  "ignore": ["*.notes.md", "*questions.md"]
 }
 ```
 

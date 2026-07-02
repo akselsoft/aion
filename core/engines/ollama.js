@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { getHistoryDir, getOutputDir } = require('../utils/outputPaths');
 
 // Ollama - local open-source inference server
 // Default endpoint: http://localhost:11434
@@ -75,6 +76,12 @@ function generateFullInputAndPrompts(data, config) {
 }
 
 function renderDocumentContent(doc, config) {
+    const content = renderDocumentBody(doc, config);
+    if (doc?.showFileName !== true) return content;
+    return [`---- File: ${doc.filename || doc.name || 'document'}`, content].filter(Boolean).join('\n\n');
+}
+
+function renderDocumentBody(doc, config) {
     const content = doc?.content || '';
     if (config?.ollama?.plaintext !== true) return content;
 
@@ -125,47 +132,61 @@ function indent(text) {
 async function ollamaEngine(data, config, projectRoot) {
     const model = config.ollama?.model || 'mistral';
     const temperature = config.ollama?.temperature ?? 0.3;
-    const writeInput = config.ollama?.writeInput !== false;
-    const writeOutputs = config.ollama?.writeOutputs !== false;
+    const numCtx = normalizePositiveInteger(config.ollama?.contextSize ?? config.ollama?.numCtx ?? config.ollama?.num_ctx);
+    const writeInput = config.ollama?.writeInput !== true;
+    const writeOutputs = config.ollama?.writeOutputs !== true;
     const inputFilename = config.ollama?.inputFilename || 'ollama-input.md';
     const summaryFilename = config.ollama?.summaryFilename || 'summary.md';
+    const outputDir = getOutputDir(projectRoot, config);
     console.log(`project root is: ${projectRoot}`);
+    console.log(`output dir is: ${outputDir}`);
+    console.log(`will I write input? ${writeInput}` )
 
     const { fullInput, prompts } = generateFullInputAndPrompts(data, config);
 
     if (!fullInput) {
         console.warn('⚠️ No input provided to Ollama. Skipping summarization.');
-        const debugPath = path.join(projectRoot, 'outputs', 'logging.log');
+        const debugPath = path.join(outputDir, 'logging.log');
         fs.mkdirSync(path.dirname(debugPath), { recursive: true });
         fs.writeFileSync(debugPath, '⚠️ No input provided to Ollama.\n\nData:\n' + JSON.stringify(data, null, 2), 'utf-8');
         return data;
     }
 
     const systemPrompt = generateSystemPrompt(config, prompts);
-    const inputPath = path.join(projectRoot, 'outputs', inputFilename);
+    const inputPath = path.join(outputDir, inputFilename);
+    const estimatedTokens = normalizePositiveInteger(config.ollama?.estimatedTokens);
+    const tokenSuffix = estimatedTokens ? ` (${estimatedTokens} estimated tokens)` : '';
     if (writeInput) {
         fs.mkdirSync(path.dirname(inputPath), { recursive: true });
         fs.writeFileSync(inputPath, systemPrompt + "\n\n" + fullInput, 'utf-8');
-        console.log(`📝 Ollama input written to ${path.relative(projectRoot, inputPath)}`);
+        console.log(`📝 Ollama input written to ${path.relative(projectRoot, inputPath)}${tokenSuffix}`);
     }
 
     try {
         console.log(`🚀 Sending to Ollama (model=${model}, temp=${temperature}, endpoint=${OLLAMA_BASE_URL})...`);
+        const options = {
+            temperature,
+            ...(numCtx ? { num_ctx: numCtx } : {})
+        };
+        const requestBody = {
+            model,
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: fullInput },
+            ],
+            options,
+            stream: false
+        };
         
+fs.writeFileSync(inputPath + '.system.md', systemPrompt || '', 'utf-8');
+fs.writeFileSync(inputPath + '.user.md', fullInput || '', 'utf-8');
+fs.writeFileSync(inputPath + '.request.json', JSON.stringify(requestBody, null, 2), 'utf-8');        
         const response = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-                model,
-                temperature,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: fullInput },
-                ],
-                stream: false,
-            }),
+            body: JSON.stringify(requestBody)
         });
 
         if (!response.ok) {
@@ -186,12 +207,12 @@ async function ollamaEngine(data, config, projectRoot) {
             });
 
             if (writeOutputs) {
-                const summaryPath = path.join(projectRoot, 'outputs', summaryFilename);
+                const summaryPath = path.join(outputDir, summaryFilename);
                 fs.mkdirSync(path.dirname(summaryPath), { recursive: true });
                 fs.writeFileSync(summaryPath, result, 'utf-8');
                 console.log(`✅ Summary written to: ${summaryPath}`);
 
-                const historyDir = path.join(projectRoot, 'history');
+                const historyDir = getHistoryDir(projectRoot, config);
                 fs.mkdirSync(historyDir, { recursive: true });
 
                 const dateStr = new Date().toISOString().split('T')[0];
@@ -230,6 +251,13 @@ async function ollamaEngine(data, config, projectRoot) {
         }
         return data;
     }
+}
+
+function normalizePositiveInteger(value) {
+    if (value === undefined || value === null || value === '') return null;
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return Math.floor(n);
 }
 
 module.exports = ollamaEngine;

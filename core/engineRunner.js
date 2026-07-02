@@ -1,5 +1,6 @@
 const fs = require('fs');
 const { logInfo, logFile, logWarn, logError, logStep } = require('./utils/logger');
+const { getOutputDir } = require('./utils/outputPaths');
 
 function stripDataForDebug(items = []) {
     return (items || []).map(i => ({
@@ -19,7 +20,7 @@ function writeDebugSnapshot(config, projectRoot, stage, items) {
     try {
         const path = require('path');
         const fs = require('fs');
-        const outPath = path.join(projectRoot, 'outputs', 'passedFiles.json');
+        const outPath = path.join(getOutputDir(projectRoot, config), 'passedFiles.json');
         fs.mkdirSync(path.dirname(outPath), { recursive: true });
         let log = [];
         if (fs.existsSync(outPath)) {

@@ -249,12 +249,16 @@ Field descriptions:
 - `type: "schedule"`: Runs the mapped `config` on matching calendar days even if no watched file changed. Scheduled entries run at most once per day.
 - `daysOfWeek`: Optional day-of-week list for scheduled entries, where `1=Sunday`, `2=Monday`, ..., `7=Saturday`.
 - `daysOfMonth`: Optional day-of-month list for scheduled entries, such as `[1, 15, 30]`. Use `"last"` for the last day of the month.
+- `startTime` and `endTime`: Optional inclusive execution window in 24-hour `HH:mm` format for scheduled entries.
+- `timezone`: Optional IANA timezone, such as `"America/Toronto"`, used for schedule days, time windows, and once-per-day tracking.
 - `idleHours`, `idleMinutes`, or `idleMs`: Idle duration for an `idle-time` entry.
 - `interval`: Optional per-entry scan interval. Defaults to minutes.
 - `intervalType`: Optional unit for `interval`; supports `minutes`, `hours`, `days`, `weeks`, or `months`. For example, use `{ "interval": 3, "intervalType": "months" }` for a quarterly scan.
 - `include`: Optional list of files or relative paths inside `folder` that should count as changes.
 - `ignore`: Optional list of names to ignore in addition to the default ignored names.
 - `runOnEmpty`: Set to `false` when an empty folder should not trigger a run.
+- `benchmark`: Set to `true` to log the config's execution duration and persist its latest result and recent history in the watch-map state file.
+- `watchConfigChanges`: Set to `true` to checksum the config and its recursively referenced `promptFile` values. A synchronized edit queues only that config, including changes detected after a watcher restart.
 
 2. Start the watcher with the map file:
 ```bash
@@ -305,6 +309,7 @@ node AION_Watcher.js . watch-map.json --interval=1 --debounce=1000
 - Each mapped folder's state is hashed independently; only its matching config executes when that folder changes
 - The watcher writes a sidecar state file named `<watch-map>.state.json`
 - The state file records `lastRunAt`, the last completed config, per-config run times, idle-time runs, and per-folder hashes
+- Entries with `"benchmark": true` also write their latest measurement to `configBenchmarks` and retain the 100 most recent measurements in `benchmarkRuns`, including failed runs
 - On restart, persisted hashes let the watcher detect files that changed while it was stopped
 - An `idle-time` entry runs only after the configured idle duration has elapsed since the last completed config run
 - Runs are queued and processed sequentially to prevent race conditions or redundant API calls
@@ -353,7 +358,23 @@ These engines send content to various LLM providers for analysis and synthesis.
 
 For the `ollama` wrapper, `tokenLimit` (or `tokenlimit`) controls oversized-input handling. AION first estimates the combined input. If it fits, everything is sent as one request with the final prompt. If it exceeds the limit, AION estimates each file independently: files that fit pass through unchanged, while oversized files are split and compressed with a lightweight fact-preserving prompt. The compressed and pass-through files are then assembled with the final prompt and sent to Ollama once.
 
+Set `"splitInputType": "story"` on an `ollama` engine to run header/detail fan-out before token-limit handling. Each document from the matching input type is sent in its own Ollama request with all other selected input sections included as shared header context. Results are appended into one final output, and logs identify each detail file uploaded. `detailInputType` and `fanoutInputType` are accepted aliases.
+
 For `ollama`, `contextSize` sets Ollama's model context window by sending `num_ctx` in the `/api/chat` request options. This is different from `tokenLimit`: `contextSize` controls Ollama runtime capacity, while `tokenLimit` controls AION's chunking/compression decision. `numCtx` and `num_ctx` are accepted as aliases, but `contextSize` is the recommended config name.
+
+For long-running local models such as Qwen, set `"stream": true` on an `ollama` engine so AION reads Ollama's streamed response chunks instead of waiting for one complete non-streamed response. Use `headersTimeoutMs`, `bodyTimeoutMs`, and `requestTimeoutMs` to increase the HTTP timeouts for slow structured-output calls. Use `numPredict` to send Ollama `num_predict` and bound response length.
+
+To protect system memory, the built-in `ollama` interpreter unloads its model after the complete interpreter run by default. Compression and split-input calls within that interpreter share the loaded model; unloading happens only after all calls finish. Set `"unloadAfterRun": false` only when intentionally retaining a model for an immediately following interpreter. `keepAlive` is also passed through to Ollama when configured:
+
+```json
+{
+  "engine": "ollama",
+  "keepAlive": "30s",
+  "unloadAfterRun": true
+}
+```
+
+Prefer one consolidated AION watcher when several configurations use Ollama. A single watcher queues configuration runs sequentially, while separate watcher processes have independent queues and may load models concurrently.
 
 Set `"plaintext": true` on an `ollama` engine to render JSON input documents as readable text before sending them to Ollama. The default is `false`, which preserves the existing raw JSON formatting.
 
@@ -389,6 +410,113 @@ Set `"plaintext": true` on an `ollama` engine to render JSON input documents as 
   "showFileName": true,
   "prompt": "Daily summary files updated in the past 7 days."
 }
+```
+
+`area-prioritizer`
+
+- Purpose: deterministically select the highest-priority attention items from explicit tasks and cadence-eligible priority areas without using an LLM.
+- The interpreter normalizes both inputs into one candidate collection and emits two inspectable passed-file entries. `area-priorities` contains `allCandidates`, `rankedCandidates`, and the authoritative downstream `selectedItems`; `area-priorities-excluded` separately contains rejected source records under `excludedItems`.
+- Summary counts remain on `area-priorities`, while the excluded entry repeats `sourceRecordCount` and `excludedCount` for standalone `dumpPassed` inspection.
+- Initial candidate types are `task` (`task:<task id>`) and `area` (`area:<area id>`). An eligible area contributes a candidate titled with its area name even when no task exists for that area.
+- Area candidates do not require `defaultAction`. When supplied, it is used as an optional deterministic candidate-title override; otherwise the area name is used. Richer domain actions belong in the area's `promptFile` and can be developed later by `task-proposer` and an LLM interpreter.
+- Source identity is retained through `sourceType`, `sourceId`, `candidateType`, and `candidateId`; source-specific fields are retained under `metadata`.
+- The interpreter reads priority state for cadence and selection-history ranking but does not modify or persist state.
+- Example:
+
+```json
+{
+  "engine": "area-prioritizer",
+  "codeType": "js",
+  "enabled": false,
+  "tasksInputType": "tasks",
+  "priorityAreasInputType": "priority-areas",
+  "priorityStateInputType": "priority-state",
+  "outputType": "area-priorities",
+  "excludedOutputType": "area-priorities-excluded",
+  "itemLimit": 3,
+  "dueSoonDays": 7,
+  "includeOverdue": true
+}
+```
+
+The referenced priority-area input only needs the area metadata used for deterministic selection; `promptFile` supplies contextual guidance for later task proposals:
+
+```json
+{
+  "id": "cheryl",
+  "name": "Cheryl",
+  "tier": 2,
+  "rank": 1,
+  "cadence": "2w",
+  "active": true,
+  "promptFile": "Cheryl Context.md"
+}
+```
+
+`task-proposer`
+
+- Purpose: build one LLM-ready `task-proposal-context` passed-file entry per eligible priority area. It does not call an LLM itself.
+- Domain context, responsibilities, desired outcomes, milestones, sequencing, and the meaning of progress belong in each area's `promptFile`; the context builder contains no area-specific rules.
+- Active areas are included only when their prompt exists and they are cadence-eligible or explicitly selected through an `area-priorities` input. Missing prompts are reported in a separate `task-proposal-context-skipped` entry; there is no generic prompt fallback.
+- Every area context includes the complete matching task history, including open, in-progress, blocked, closed, and cancelled tasks, plus area selection history and configured context.
+- A following standard `ollama` or `chatgpt` interpreter consumes `task-proposal-context` and produces the model response. Those provider engines remain responsible for the LLM call and model selection.
+- Contexts and resulting proposals are advisory. The builder never modifies authoritative tasks or priority state.
+- Each proposed task is requested in the exact `tasks.json` shape (`id`, `title`, `areaId`, `dueDate`, `status`, `notes`, `createdAt`, `updatedAt`, and `closedAt`). The builder reserves unique task IDs for the run so accepted proposals can be pasted directly into the authoritative `tasks` array.
+
+Priority-area example:
+
+```json
+{
+  "id": "pattern-witness",
+  "name": "Pattern Witness",
+  "cadence": "d",
+  "active": true,
+  "promptFile": "Pattern Witness Context.md"
+}
+```
+
+Context-builder and LLM examples (left disabled until review is desired):
+
+```json
+{
+  "engine": "task-proposer",
+  "codeType": "js",
+  "enabled": false,
+  "tasksInputType": "morning-tasks",
+  "priorityAreasInputType": "priority-areas",
+  "priorityStateInputType": "task-priority-state",
+  "promptsDir": "./prompts",
+  "maxProposalsPerArea": 5,
+  "outputType": "task-proposal-context"
+},
+{
+  "engine": "ollama",
+  "enabled": false,
+  "inputType": "task-proposal-context",
+  "promptFile": "./prompts/Task Proposal LLM.md",
+  "model": "llama3.1:8b",
+  "outputType": "task-proposals"
+},
+{
+  "engine": "chatgpt",
+  "enabled": false,
+  "inputType": "task-proposal-context",
+  "promptFile": "./prompts/Task Proposal LLM.md",
+  "model": "gpt-4o-mini",
+  "outputType": "task-proposals"
+}
+```
+
+An area-specific context prompt can remain concise while carrying the domain intelligence. It may describe an ongoing responsibility or relationship rather than a goal:
+
+```markdown
+# Pattern Witness context
+
+Long-term goal: finish and publish the manuscript.
+Current state: the first draft is incomplete.
+Meaningful progress: complete missing scenes before researching agents.
+Do not propose outreach until a complete draft exists.
+Review existing completed work and identify the next unmet prerequisite.
 ```
 
 `sql.collector`
@@ -550,6 +678,8 @@ Engines that ship with AION for data collection, transformation, and output.
 | `artifacts.js` | Manages artifact files and metadata; supports JSON/CSV/Markdown |
 | `action-items.js` | Maintains an `Action-Items.md` table from collected context |
 | `action-items.collector.js` | Emits overdue, recurring, and upcoming action items for responders |
+| `area-prioritizer.js` | Deterministically combines task and cadence-area candidates into `area-priorities.selectedItems` |
+| `task-proposer.js` | Builds area-specific `task-proposal-context` entries for a following LLM interpreter |
 | `dumpPassed.js` | Debug utility; writes current `ctx.passedFiles` to JSON for inspection |
 | `word-count.js` | Counts words per document and estimates page counts |
 | `JSONDB.js` | Maintains JSON topic databases and optional people contact summaries |
@@ -581,6 +711,19 @@ Implementations are predefined workflow packages combining custom engines, promp
 - **Components:** Custom code parsing engines, documentation generators
 - **Config:** `implementations/deacon/template.json`
 - **Key Files:** Custom engines in `implementations/deacon/engines/`
+
+#### Deacon DevOps Planning Scoring
+
+`implementations/deacon/sourceadapters/devops.planning.js` uses a configurable additive scoring model for planning signals. The default policy is:
+
+- Priority: P1 `60`, P2 `40`, P3 `20`, P4 `0`.
+- Work item type: Bug `+5`, Feature `+0`, so a Bug beats an otherwise identical Feature without pretending all Bugs have lower effort.
+- Work area: Case Files `+10`, People `+5`, Organizations `+0`. This can change ordering among otherwise similar items, but it is intentionally smaller than a priority tier so Case Files does not automatically outrank all People or Organizations work.
+- Recency: up to `15` points within a `30` day changed-date window.
+- Age: up to `10` points, with newly created items receiving the maximum age score and very old items receiving less.
+- Effort: effort `1` to `5` maps to `+3`, `+2`, `+1`, `0`, `-2`.
+
+Put overrides in a config-level `scoring` block, or on the `devops.planning` source as `scoring`. Each scored item includes `score`, `scoreBreakdown`, and `scoreInputs`; the adapter also writes `planning-scores.json` for explainability and downstream AION analysis.
 
 **`implementations/free/`**
 - **Purpose:** Free/open-source reference implementation

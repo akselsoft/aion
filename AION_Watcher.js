@@ -2,8 +2,10 @@
 // Polling-based watcher that runs runner.js when files change inside a folder.
 // Accepts (legacy): watchDir, configPath
 // Map mode: watchDir, mapPath (JSON array of folder entries and idle-time entries)
-// Folder entry: { folder, config, interval?, intervalType?, ignore?, include?, runOnEmpty?, requireFiles?, maxRunsPerPeriod?, period? }
-// Idle-time entry: { type: "idle-time", config, idleHours?|idleMinutes?|idleMs?, interval?, intervalType? }
+// All map entries may set benchmark: true and watchConfigChanges: true.
+// Folder entry: { folder, config, interval?, intervalType?, ignore?, include?, runOnEmpty?, requireFiles?, maxRunsPerPeriod?, period?, benchmark? }
+// Idle-time entry: { type: "idle-time", config, idleHours?|idleMinutes?|idleMs?, interval?, intervalType?, benchmark? }
+// Schedule entry: { type: "schedule", config, daysOfWeek?, daysOfMonth?, startTime?, endTime?, timezone?, interval?, intervalType?, benchmark? }
 // Optional flags: --interval=minutes, --debounce=ms
 
 const fs = require('fs');
@@ -86,6 +88,56 @@ async function countTreeFiles(root, ignoreList, includeList = []) {
     return count;
 }
 
+function collectPromptFiles(value, found = []) {
+    if (Array.isArray(value)) {
+        value.forEach(item => collectPromptFiles(item, found));
+        return found;
+    }
+    if (!value || typeof value !== 'object') return found;
+    for (const [key, child] of Object.entries(value)) {
+        if (/promptFile$/i.test(key) && typeof child === 'string' && child.trim()) {
+            found.push(child.trim());
+        } else {
+            collectPromptFiles(child, found);
+        }
+    }
+    return found;
+}
+
+async function hashConfigDependencies(configAbs) {
+    const hash = crypto.createHash('sha1');
+    let raw;
+    try {
+        raw = await fs.promises.readFile(configAbs);
+    } catch {
+        return hash.update(`missing:${configAbs}`).digest('hex');
+    }
+    hash.update(`config:${configAbs}:`).update(raw);
+
+    let config;
+    try {
+        config = JSON.parse(raw.toString('utf8'));
+    } catch {
+        return hash.digest('hex');
+    }
+
+    const promptPaths = [...new Set(collectPromptFiles(config))]
+        .map(promptFile => {
+            const expanded = expandHome(promptFile);
+            return path.isAbsolute(expanded) ? expanded : path.resolve(path.dirname(configAbs), expanded);
+        })
+        .sort();
+    for (const promptPath of promptPaths) {
+        try {
+            const prompt = await fs.promises.readFile(promptPath);
+            hash.update(`prompt:${promptPath}:`).update(prompt);
+        } catch {
+            hash.update(`missing-prompt:${promptPath}`);
+        }
+    }
+    return hash.digest('hex');
+}
+
 function startWatcher(watchDir, configPath, options = {}) {
     const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
     const debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
@@ -100,6 +152,7 @@ function startWatcher(watchDir, configPath, options = {}) {
     let running = false;
 
     let markRunComplete = () => {};
+    let markRunFailed = () => {};
 
     function enqueueRun(absConfig, reason = 'change', entry = null) {
         // de-dupe queued configs
@@ -109,7 +162,9 @@ function startWatcher(watchDir, configPath, options = {}) {
             reason,
             queuedAt: new Date().toISOString(),
             entryId: entry?.id || null,
-            limitPeriod: entry?.limitPeriod || null
+            entryName: entry?.name || path.basename(absConfig),
+            limitPeriod: entry?.limitPeriod || null,
+            benchmark: entry?.benchmark === true
         });
         processQueue();
     }
@@ -119,16 +174,40 @@ function startWatcher(watchDir, configPath, options = {}) {
         const next = queue.shift();
         if (!next) return;
         running = true;
+        const startedAt = new Date().toISOString();
+        const startedNs = process.hrtime.bigint();
+        if (next.benchmark) {
+            console.log(`[benchmark] Starting ${next.entryName} (${next.absConfig})`);
+        }
         const child = spawn(process.execPath, [runnerPath, next.absConfig], {
             stdio: 'inherit',
             env: { ...process.env }
         });
         child.on('exit', (code, signal) => {
             running = false;
+            const durationMs = Number(process.hrtime.bigint() - startedNs) / 1e6;
+            const completedAt = new Date().toISOString();
+            const benchmark = {
+                entryId: next.entryId,
+                entryName: next.entryName,
+                config: next.absConfig,
+                reason: next.reason,
+                queuedAt: next.queuedAt,
+                startedAt,
+                completedAt,
+                durationMs: Math.round(durationMs),
+                status: code === 0 ? 'success' : 'failed',
+                exitCode: code,
+                signal: signal || null
+            };
+            if (next.benchmark) {
+                console.log(`[benchmark] ${next.entryName} ${benchmark.status} in ${formatBenchmarkDuration(durationMs)}`);
+            }
             if (code !== 0) {
                 console.error(`runner.js exited with code ${code}${signal ? ` (signal ${signal})` : ''}`);
+                markRunFailed(next, benchmark);
             } else {
-                markRunComplete(next.absConfig, next.reason, next.queuedAt, next);
+                markRunComplete(next.absConfig, next.reason, next.queuedAt, next, benchmark);
             }
             processQueue();
         });
@@ -185,19 +264,51 @@ function startWatcher(watchDir, configPath, options = {}) {
         : `${path.resolve(configPath)}.state.json`;
     const state = loadWatcherState(statePath);
     const mapEntries = loadMap(configPath, watchDir, intervalMs, state);
-    markRunComplete = (absConfig, reason, queuedAt, runMeta = {}) => {
+    markRunComplete = (absConfig, reason, queuedAt, runMeta = {}, benchmark = null) => {
         const nowIso = new Date().toISOString();
         state.lastRunAt = nowIso;
-        state.lastRun = { config: absConfig, reason, queuedAt, completedAt: nowIso };
+        state.lastRun = {
+            config: absConfig,
+            reason,
+            queuedAt,
+            completedAt: nowIso,
+            ...(runMeta.benchmark && benchmark ? { durationMs: benchmark.durationMs } : {})
+        };
         state.configRuns = state.configRuns || {};
         state.configRuns[absConfig] = nowIso;
+        if (runMeta.benchmark && benchmark) recordBenchmark(state, benchmark);
         if (runMeta.entryId && runMeta.limitPeriod) {
             recordLimitedRun(state, runMeta.entryId, runMeta.limitPeriod, nowIso);
         }
         writeWatcherState(statePath, state);
     };
+    markRunFailed = (runMeta, benchmark) => {
+        if (!runMeta.benchmark) return;
+        recordBenchmark(state, benchmark);
+        writeWatcherState(statePath, state);
+    };
     const timers = [];
     const idleTimers = [];
+    const scheduleTimers = [];
+    const configWatchTimers = [];
+
+    async function tickConfigEntry(entry) {
+        try {
+            const currentHash = await hashConfigDependencies(entry.configAbs);
+            if (entry.configWatchHash && currentHash !== entry.configWatchHash) {
+                if (entry.configDebounceTimer) clearTimeout(entry.configDebounceTimer);
+                entry.configDebounceTimer = setTimeout(
+                    () => enqueueRun(entry.configAbs, `config-change:${entry.name}`, entry),
+                    debounceMs
+                );
+            }
+            entry.configWatchHash = currentHash;
+            updateConfigWatchState(state, entry, currentHash);
+            writeWatcherState(statePath, state);
+        } catch (err) {
+            console.error(`Config watcher error (${entry.configAbs}): ${err.message}`);
+        }
+    }
 
     async function tickEntry(entry) {
         try {
@@ -236,7 +347,18 @@ function startWatcher(watchDir, configPath, options = {}) {
         state.idleRuns = state.idleRuns || {};
         state.idleRuns[entry.id] = new Date(nowMs).toISOString();
         writeWatcherState(statePath, state);
-        enqueueRun(entry.configAbs, `idle-time:${entry.name}`);
+        enqueueRun(entry.configAbs, `idle-time:${entry.name}`, entry);
+    }
+
+    function tickScheduledEntry(entry) {
+        const now = new Date();
+        if (!matchesSchedule(entry, now)) return;
+        if (hasScheduledRunToday(state, entry, now)) return;
+        if (!canRunLimitedEntry(state, entry, now)) return;
+
+        recordScheduledRun(state, entry, now.toISOString());
+        writeWatcherState(statePath, state);
+        enqueueRun(entry.configAbs, `schedule:${entry.name}`, entry);
     }
 
     async function startMap() {
@@ -257,6 +379,19 @@ function startWatcher(watchDir, configPath, options = {}) {
             entry.baselineHash = currentHash;
             updateEntryState(state, entry, currentHash);
         }));
+        const configWatchEntries = [
+            ...mapEntries.folderEntries,
+            ...mapEntries.idleEntries,
+            ...mapEntries.scheduledEntries
+        ].filter(entry => entry.watchConfigChanges);
+        await Promise.all(configWatchEntries.map(async entry => {
+            const currentHash = await hashConfigDependencies(entry.configAbs);
+            if (entry.configWatchHash && currentHash !== entry.configWatchHash) {
+                enqueueRun(entry.configAbs, `startup-config-change:${entry.name}`, entry);
+            }
+            entry.configWatchHash = currentHash;
+            updateConfigWatchState(state, entry, currentHash);
+        }));
         if (!state.lastRunAt) state.lastRunAt = new Date().toISOString();
         writeWatcherState(statePath, state);
 
@@ -271,6 +406,18 @@ function startWatcher(watchDir, configPath, options = {}) {
             idleTimers.push(t);
             tickIdleEntry(entry);
         }
+        for (const entry of mapEntries.scheduledEntries) {
+            console.log(`Checking scheduled ${path.basename(entry.configAbs)} every ${formatDuration(entry.intervalMs)}.`);
+            const t = scheduleRecurring(() => tickScheduledEntry(entry), entry.intervalMs);
+            scheduleTimers.push(t);
+            tickScheduledEntry(entry);
+        }
+        for (const entry of configWatchEntries) {
+            console.log(`Watching config and prompts for ${path.basename(entry.configAbs)}.`);
+            // Config/prompt edits should not wait for a weekly or monthly source scan.
+            const t = scheduleRecurring(() => tickConfigEntry(entry), Math.min(entry.intervalMs, intervalMs));
+            configWatchTimers.push(t);
+        }
     }
 
     startMap();
@@ -279,7 +426,11 @@ function startWatcher(watchDir, configPath, options = {}) {
         stop() {
             timers.forEach(cancelTimer);
             idleTimers.forEach(cancelTimer);
+            scheduleTimers.forEach(cancelTimer);
+            configWatchTimers.forEach(cancelTimer);
             mapEntries.folderEntries.forEach(e => clearTimeout(e.debounceTimer));
+            [...mapEntries.folderEntries, ...mapEntries.idleEntries, ...mapEntries.scheduledEntries]
+                .forEach(e => clearTimeout(e.configDebounceTimer));
         },
         isRunning: () => running
     };
@@ -297,7 +448,7 @@ function isMapFile(p) {
 }
 
 function isMapEntry(item) {
-    return item && item.config && (item.folder || isIdleEntry(item));
+    return item && item.config && (item.folder || isIdleEntry(item) || isScheduleEntry(item));
 }
 
 function isIdleEntry(item) {
@@ -309,6 +460,14 @@ function isIdleEntry(item) {
     );
 }
 
+function isScheduleEntry(item) {
+    return item && (
+        item.type === 'schedule' ||
+        item.kind === 'schedule' ||
+        item.schedule === true
+    );
+}
+
 function loadMap(mapPath, watchDir, defaultIntervalMs = DEFAULT_INTERVAL_MS, state = {}) {
     const full = path.resolve(mapPath);
     const baseDir = path.dirname(full);
@@ -317,6 +476,7 @@ function loadMap(mapPath, watchDir, defaultIntervalMs = DEFAULT_INTERVAL_MS, sta
     if (!Array.isArray(parsed)) throw new Error('watch-map must be an array');
     const folderEntries = [];
     const idleEntries = [];
+    const scheduledEntries = [];
 
     parsed.forEach((entry, index) => {
         if (!isMapEntry(entry)) {
@@ -331,12 +491,41 @@ function loadMap(mapPath, watchDir, defaultIntervalMs = DEFAULT_INTERVAL_MS, sta
         if (isIdleEntry(entry)) {
             const idleMs = parseIdleMs(entry);
             if (!idleMs) throw new Error(`watch-map idle-time entry ${index} requires idleMs, idleMinutes, or idleHours`);
+            const persistedConfigWatch = state.configWatches?.[entry.id || entry.name || `idle-time:${configAbs}`] || {};
             idleEntries.push({
                 id: entry.id || entry.name || `idle-time:${configAbs}`,
                 name,
                 configAbs,
                 idleMs,
-                intervalMs: parseMapIntervalMs(entry, defaultIntervalMs)
+                intervalMs: parseMapIntervalMs(entry, defaultIntervalMs),
+                benchmark: entry.benchmark === true,
+                watchConfigChanges: entry.watchConfigChanges === true,
+                configWatchHash: persistedConfigWatch.lastHash || null,
+                configDebounceTimer: null
+            });
+            return;
+        }
+
+        if (isScheduleEntry(entry)) {
+            const runLimit = parseRunLimit(entry);
+            const id = entry.id || entry.name || `schedule:${configAbs}`;
+            const persistedConfigWatch = state.configWatches?.[id] || {};
+            scheduledEntries.push({
+                id,
+                name,
+                configAbs,
+                intervalMs: parseMapIntervalMs(entry, defaultIntervalMs),
+                daysOfWeek: parseScheduleList(entry.daysOfWeek ?? entry.runDaysOfWeek ?? entry.dow),
+                daysOfMonth: parseScheduleList(entry.daysOfMonth ?? entry.runDaysOfMonth ?? entry.dom),
+                startTime: parseScheduleTime(entry.startTime, 'startTime'),
+                endTime: parseScheduleTime(entry.endTime, 'endTime'),
+                timezone: entry.timezone ? String(entry.timezone) : null,
+                maxRunsPerPeriod: runLimit.maxRunsPerPeriod,
+                limitPeriod: runLimit.period,
+                benchmark: entry.benchmark === true,
+                watchConfigChanges: entry.watchConfigChanges === true,
+                configWatchHash: persistedConfigWatch.lastHash || null,
+                configDebounceTimer: null
             });
             return;
         }
@@ -356,6 +545,7 @@ function loadMap(mapPath, watchDir, defaultIntervalMs = DEFAULT_INTERVAL_MS, sta
         const runLimit = parseRunLimit(entry);
         const id = entry.id || entry.name || `${folderAbs}:${configAbs}:${include.join(',')}`;
         const persisted = state.entries?.[id] || state.entries?.[folderAbs] || {};
+        const persistedConfigWatch = state.configWatches?.[id] || {};
         folderEntries.push({
             id,
             name,
@@ -367,12 +557,16 @@ function loadMap(mapPath, watchDir, defaultIntervalMs = DEFAULT_INTERVAL_MS, sta
             intervalMs,
             maxRunsPerPeriod: runLimit.maxRunsPerPeriod,
             limitPeriod: runLimit.period,
+            benchmark: entry.benchmark === true,
+            watchConfigChanges: entry.watchConfigChanges === true,
+            configWatchHash: persistedConfigWatch.lastHash || null,
+            configDebounceTimer: null,
             baselineHash: persisted.lastHash || null,
             debounceTimer: null
         });
     });
 
-    return { folderEntries, idleEntries };
+    return { folderEntries, idleEntries, scheduledEntries };
 }
 
 function parseMapIntervalMs(entry, defaultIntervalMs) {
@@ -495,6 +689,110 @@ function parseRunLimit(entry) {
     return { maxRunsPerPeriod: Math.floor(maxRuns), period };
 }
 
+function parseScheduleList(value) {
+    if (value === undefined || value === null || value === '') return [];
+    const raw = Array.isArray(value) ? value : String(value).split(',');
+    return raw
+        .map(v => typeof v === 'string' ? v.trim().toLowerCase() : v)
+        .filter(v => v !== '')
+        .map(v => {
+            if (v === 'last' || v === 'last-day' || v === 'lastday') return 'last';
+            const n = Number(v);
+            return Number.isFinite(n) ? Math.floor(n) : null;
+        })
+        .filter(v => v !== null);
+}
+
+function matchesSchedule(entry, now = new Date()) {
+    const daysOfWeek = entry.daysOfWeek || [];
+    const daysOfMonth = entry.daysOfMonth || [];
+    const parts = scheduleDateParts(now, entry.timezone);
+
+    if (daysOfWeek.length > 0 && !daysOfWeek.includes(parts.dayOfWeek)) return false;
+    if (daysOfMonth.length > 0 && !matchesScheduleDayOfMonth(daysOfMonth, parts)) return false;
+    if (!matchesScheduleTimeWindow(entry, parts)) return false;
+    return daysOfWeek.length > 0 || daysOfMonth.length > 0 || entry.always === true;
+}
+
+function parseScheduleTime(value, fieldName) {
+    if (value === undefined || value === null || value === '') return null;
+    const match = String(value).match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+    if (!match) throw new Error(`Invalid ${fieldName} "${value}". Use 24-hour HH:mm.`);
+    return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function scheduleDateParts(date, timezone = null) {
+    if (!timezone) {
+        return {
+            year: date.getFullYear(),
+            month: date.getMonth() + 1,
+            day: date.getDate(),
+            dayOfWeek: dayOfWeekNumber(date),
+            minuteOfDay: date.getHours() * 60 + date.getMinutes()
+        };
+    }
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: timezone,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+    });
+    const values = Object.fromEntries(formatter.formatToParts(date).map(part => [part.type, part.value]));
+    const weekdays = { Sun: 1, Mon: 2, Tue: 3, Wed: 4, Thu: 5, Fri: 6, Sat: 7 };
+    return {
+        year: Number(values.year),
+        month: Number(values.month),
+        day: Number(values.day),
+        dayOfWeek: weekdays[values.weekday],
+        minuteOfDay: Number(values.hour) * 60 + Number(values.minute)
+    };
+}
+
+function matchesScheduleTimeWindow(entry, parts) {
+    if (entry.startTime === null || entry.startTime === undefined) return true;
+    if (entry.endTime === null || entry.endTime === undefined) return parts.minuteOfDay >= entry.startTime;
+    if (entry.startTime <= entry.endTime) {
+        return parts.minuteOfDay >= entry.startTime && parts.minuteOfDay <= entry.endTime;
+    }
+    return parts.minuteOfDay >= entry.startTime || parts.minuteOfDay <= entry.endTime;
+}
+
+function matchesScheduleDayOfMonth(daysOfMonth, parts) {
+    if (daysOfMonth.includes(parts.day)) return true;
+    const last = new Date(parts.year, parts.month, 0).getDate();
+    return daysOfMonth.includes('last') && parts.day === last;
+}
+
+function matchesDayOfMonth(daysOfMonth, now = new Date()) {
+    const day = now.getDate();
+    if (daysOfMonth.includes(day)) return true;
+    return daysOfMonth.includes('last') && day === lastDayOfMonth(now);
+}
+
+function lastDayOfMonth(date) {
+    return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+}
+
+function dayOfWeekNumber(date) {
+    return date.getDay() + 1;
+}
+
+function hasScheduledRunToday(state, entry, now = new Date()) {
+    const key = scheduleDayKey(now, entry.timezone);
+    return !!state.scheduledRuns?.[entry.id]?.[key];
+}
+
+function recordScheduledRun(state, entry, timestamp) {
+    const key = scheduleDayKey(new Date(timestamp), entry.timezone);
+    state.scheduledRuns = state.scheduledRuns || {};
+    state.scheduledRuns[entry.id] = state.scheduledRuns[entry.id] || {};
+    state.scheduledRuns[entry.id][key] = timestamp;
+}
+
+function scheduleDayKey(date, timezone = null) {
+    const parts = scheduleDateParts(date, timezone);
+    return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+}
+
 function canRunLimitedEntry(state, entry, now = new Date()) {
     if (!entry.maxRunsPerPeriod || !entry.limitPeriod) return true;
     const key = periodKey(now, entry.limitPeriod);
@@ -573,6 +871,15 @@ function updateEntryState(state, entry, hash) {
     };
 }
 
+function updateConfigWatchState(state, entry, hash) {
+    state.configWatches = state.configWatches || {};
+    state.configWatches[entry.id] = {
+        config: entry.configAbs,
+        lastHash: hash,
+        lastScannedAt: new Date().toISOString()
+    };
+}
+
 function writeWatcherState(statePath, state) {
     try {
         fs.mkdirSync(path.dirname(statePath), { recursive: true });
@@ -580,6 +887,25 @@ function writeWatcherState(statePath, state) {
     } catch (err) {
         console.warn(`Unable to write watcher state ${statePath}: ${err.message}`);
     }
+}
+
+function recordBenchmark(state, benchmark, historyLimit = 100) {
+    state.configBenchmarks = state.configBenchmarks || {};
+    const key = benchmark.entryId || benchmark.config;
+    state.configBenchmarks[key] = benchmark;
+    state.benchmarkRuns = state.benchmarkRuns || [];
+    state.benchmarkRuns.push(benchmark);
+    if (state.benchmarkRuns.length > historyLimit) {
+        state.benchmarkRuns.splice(0, state.benchmarkRuns.length - historyLimit);
+    }
+}
+
+function formatBenchmarkDuration(ms) {
+    if (ms < 1000) return `${Math.round(ms)} ms`;
+    const seconds = ms / 1000;
+    if (seconds < 60) return `${seconds.toFixed(2)} s`;
+    const minutes = Math.floor(seconds / 60);
+    return `${minutes}m ${(seconds % 60).toFixed(1)}s`;
 }
 
 function formatDuration(ms) {
@@ -694,7 +1020,19 @@ module.exports = {
         normalizeIntervalType,
         parseRunLimit,
         parseMapIntervalMs,
+        parseScheduleList,
+        parseScheduleTime,
+        matchesSchedule,
+        scheduleDateParts,
+        scheduleDayKey,
+        dayOfWeekNumber,
+        hasScheduledRunToday,
+        recordScheduledRun,
         periodKey,
-        recordLimitedRun
+        recordLimitedRun,
+        recordBenchmark,
+        formatBenchmarkDuration,
+        collectPromptFiles,
+        hashConfigDependencies
     }
 };

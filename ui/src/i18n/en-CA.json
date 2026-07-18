@@ -1,0 +1,322 @@
+{
+  "app": {
+    "title": "AION Console",
+    "subtitle": "Pipeline and watcher control",
+    "local": "local",
+    "desktop": "desktop",
+    "browser": "browser"
+  },
+  "nav": {
+    "workspace": "Workspace",
+    "configs": "Configs",
+    "configsCaption": "Collectors, interpreters, responders",
+    "watchers": "Watch Files",
+    "watchersCaption": "Scheduled and watched runs"
+  },
+  "actions": {
+    "add": "Add",
+    "addEntry": "Add Entry",
+    "addExistingEngine": "Add existing engine",
+    "applyJson": "Apply JSON",
+    "cancel": "Cancel",
+    "close": "Close",
+    "editStep": "Edit step",
+    "loadLabels": "Load Labels",
+    "open": "Open",
+    "rawJson": "Raw JSON",
+    "reload": "Reload",
+    "removeStep": "Remove step",
+    "runTest": "Run Test",
+    "save": "Save"
+  },
+  "files": {
+    "configFile": "Config file",
+    "watchFile": "Watch file",
+    "selectPrompt": "Select a file to begin."
+  },
+  "meta": {
+    "configuration": "Configuration",
+    "watcher": "Watcher",
+    "name": "Name",
+    "persona": "Persona",
+    "outputFolder": "Output folder",
+    "legacyEngines": "Legacy engines present:"
+  },
+  "phases": {
+    "collectors": "Collectors",
+    "collectorsCaption": "Load source material into passedFiles",
+    "interpreters": "Interpreters",
+    "interpretersCaption": "Transform, compact, evaluate, or summarize",
+    "responders": "Responders",
+    "respondersCaption": "Write files, send messages, or publish outputs",
+    "empty": "No {phase} yet."
+  },
+  "engine": {
+    "unnamed": "Unnamed step",
+    "name": "Name",
+    "engine": "Engine",
+    "codeType": "Code type",
+    "inputType": "Input type",
+    "outputType": "Output type",
+    "attributes": "Attributes",
+    "attributesHelp": "Edit every nonstandard engine parameter without opening raw JSON.",
+    "attrCount": "{count} attrs",
+    "attribute": "Attribute",
+    "disabled": "Disabled",
+    "enabled": "Enabled",
+    "value": "Value",
+    "newAttribute": "New attribute",
+    "noAttributes": "No custom attributes yet.",
+    "noEngine": "No engine selected",
+    "parameters": "Step Parameters",
+    "rawEngine": "Engine value: {engine}",
+    "rawKey": "JSON key: {key}"
+  },
+  "watcher": {
+    "entries": "Watcher Entries",
+    "count": "{count} scheduled or watched runs",
+    "entry": "Watcher entry",
+    "type": "Type",
+    "configPath": "Config path",
+    "interval": "Interval",
+    "intervalType": "Interval type",
+    "daysOfWeek": "Days of week",
+    "daysOfMonth": "Days of month"
+  },
+  "run": {
+    "output": "Run Output",
+    "running": "Running...",
+    "exitCode": "Exit code {code}",
+    "confirmTitle": "Run this config?",
+    "confirmMessage": "This starts the same runner used from the command line. It may call Ollama, Azure DevOps, email, or other configured engines.",
+    "timeout": "[UI] Run timed out after 5 minutes."
+  },
+  "notify": {
+    "labelsLoaded": "Interface labels loaded.",
+    "labelsDesktopOnly": "Use the desktop runtime to load a local labels file.",
+    "saved": "Saved.",
+    "desktopOpenOnly": "Use the desktop runtime to browse local files. Browser mode lists workspace JSON files."
+  },
+  "summary": {
+    "collectors": "{count} collectors",
+    "interpreters": "{count} interpreters",
+    "responders": "{count} responders",
+    "watchEntries": "{count} watch entries",
+    "unsaved": "Unsaved changes"
+  },
+  "engineCatalog": {
+    "common": {
+      "params": {
+        "name": "Step name",
+        "engine": "Engine",
+        "enabled": "Enabled",
+        "codeType": "Code type",
+        "inputType": "Input collection",
+        "outputType": "Output collection",
+        "filename": "Output file name",
+        "outputFile": "Output file",
+        "prompt": "Prompt text",
+        "promptFile": "Prompt file",
+        "replace": "Replace existing output",
+        "dryRun": "Dry run",
+        "debug": "Debug mode",
+        "model": "Model",
+        "plaintext": "Plain text output"
+      }
+    },
+    "tokenTrimmer": {
+      "label": "Token Trimmer",
+      "help": "Removes superfluous tokens from source files so they aren't sent to hosted LLMs",
+      "params": {}
+    },
+    "heatmap": {
+      "label": "Heat Map",
+      "help": "Builds a heat map based on the content and specific keywords to show how prevalent certain items are",
+      "params": {}
+    },
+    "deacon.collect": {
+      "label": "Deacon Source Collector",
+      "help": "Runs configured Deacon or core source adapters and passes their documents into the pipeline.",
+      "params": {
+        "source": "Inline source configuration",
+        "sourceTypes": "Only these source adapter types",
+        "sourceNames": "Only these source names"
+      }
+    },
+    "deacon.workitems.query": {
+      "label": "Azure DevOps Work Item Query",
+      "help": "Runs one or more WIQL queries against Azure DevOps and emits JSON/markdown work item artifacts.",
+      "params": {
+        "source": "Query source configuration",
+        "queries": "WIQL queries",
+        "wiql": "Inline WIQL",
+        "wiqlFile": "WIQL file",
+        "fields": "Returned ADO fields",
+        "linkResult": "Use source or target IDs",
+        "onlyWorkItemType": "Only these work item types",
+        "mdLayout": "Markdown layout",
+        "outDir": "Artifact output folder"
+      }
+    },
+    "devops.workitems.active": {
+      "label": "Active Work Item Analysis",
+      "help": "Summarizes active and completed Azure DevOps work items by assignee, area, estimates, actuals, cycle time, and overruns.",
+      "params": {
+        "outputType": "Output collection",
+        "prompt": "Review prompt"
+      }
+    },
+    "devops.workitems.new": {
+      "label": "New Work Item Analysis",
+      "help": "Summarizes new or backlog work items by area, priority, estimate size, assignee, and planning relevance.",
+      "params": {
+        "outputType": "Output collection",
+        "prompt": "Planning prompt"
+      }
+    },
+    "devops.review-items": {
+      "label": "Review Items by Assignee",
+      "help": "Builds a people-focused review of active work and suggested new work, using workload, capacity, priority, effort, and area fit.",
+      "params": {
+        "inputType": "Review item input collection",
+        "outputType": "Review output collection",
+        "filename": "Review summary file",
+        "summaryMode": "Summary detail level",
+        "ignoreTitle": "Ignore titles containing",
+        "maxActiveItems": "Maximum active items",
+        "targetTotalItemsPerPerson": "Target items per person"
+      }
+    },
+    "devops.pipeline.log-failures": {
+      "label": "Pipeline Log Failure Extractor",
+      "help": "Parses pipeline logs and extracts failed tests, Cypress signals, spec files, and high-value failure lines.",
+      "params": {
+        "inputType": "Pipeline log input collection",
+        "outputType": "Failure output collection",
+        "failureTextIncludes": "Failure text must include",
+        "definitionIncludes": "Pipeline name must include",
+        "branch": "Only this branch",
+        "onlyCypress": "Only Cypress logs",
+        "onlyFailedTests": "Only logs with failed tests",
+        "outDir": "Failure artifact folder"
+      }
+    },
+    "devops.pipeline.failures": {
+      "label": "Pipeline Failure PR Correlation",
+      "help": "Correlates recent pipeline failures with pull requests completed shortly before each failure for investigation.",
+      "params": {
+        "outDir": "Analysis output folder",
+        "correlationWindowHours": "PR correlation window"
+      }
+    },
+    "devops.pr.summary": {
+      "label": "Pull Request Summary",
+      "help": "Creates a markdown summary of pull requests and files touched by more than one PR in the analysis window.",
+      "params": {
+        "prsSummaryPath": "PR summary JSON path",
+        "outDir": "PR output folder",
+        "fileName": "PR summary file"
+      }
+    },
+    "devops.planning": {
+      "label": "DevOps Planning Synthesis",
+      "help": "Combines work item summaries, planning notes, prior context, and metrics into a forward-looking planning synthesis.",
+      "params": {}
+    },
+    "devops.recommendation": {
+      "label": "Iteration Recommendation Analyzer",
+      "help": "Analyzes iteration metrics and work item summaries to identify delivery, utilization, testing, and area-path recommendations.",
+      "params": {
+        "recommendations": "Recommendation settings",
+        "iterations": "Iteration folders to include",
+        "type": "Output collection"
+      }
+    },
+    "extract-blocks": {
+      "label": "Extract Blocks",
+      "help": "Extracts marked sections from matching artifact entries before later pipeline steps run.",
+      "params": {
+        "start": "Starting delimiter",
+        "end": "Ending delimiter",
+        "sourceNames": "Only these source names",
+        "itemNames": "Only these artifact entries"
+      }
+    },
+    "ollama": {
+      "label": "Ollama",
+      "help": "Sends selected pipeline content to a local Ollama model and stores the response.",
+      "params": {
+        "chunkPrompt": "Chunk prompt",
+        "chunkPromptFile": "Chunk prompt file",
+        "mergeCompressionJson": "Merge chunk JSON",
+        "debugCompression": "Write chunk debug files"
+      }
+    },
+    "chatgpt": {
+      "label": "ChatGPT",
+      "help": "Sends selected pipeline content to ChatGPT and stores the response.",
+      "params": {
+        "emitSuggestions": "Emit suggestions",
+        "suggestionScope": "Suggestion scope",
+        "suggestionCount": "Suggestion count",
+        "applySuggestions": "Apply suggestions"
+      }
+    },
+    "bootstrapCollector": {
+      "label": "Bootstrap Project Collector",
+      "help": "Creates or fills missing project scaffolding files and passes them into the pipeline.",
+      "params": {
+        "seedDir": "Project seed folder",
+        "createPolicy": "File creation policy"
+      }
+    },
+    "artifact.compact": {
+      "label": "Artifact Compactor",
+      "help": "Reduces noisy JSON artifacts into smaller records for downstream LLM or scoring steps.",
+      "params": {
+        "options": "Compaction options",
+        "arrayPath": "Records array path",
+        "preserveFields": "Fields to preserve",
+        "renameFields": "Friendly field names",
+        "cleanTextFields": "Text fields to clean",
+        "keywordExtraction": "Keyword extraction",
+        "signalExtraction": "Signal extraction"
+      }
+    },
+    "word-count": {
+      "label": "Word Count",
+      "help": "Counts words and estimates pages for matching input collections.",
+      "params": {
+        "sourceNames": "Only these source names",
+        "ignore": "Ignore matching files",
+        "pagesDivisor": "Words per page",
+        "mergeExisting": "Update existing table"
+      }
+    },
+    "dumpPassed": {
+      "label": "Dump Passed Files",
+      "help": "Writes a snapshot of the current passedFiles state for debugging or audit trails.",
+      "params": {
+        "label": "Snapshot label"
+      }
+    },
+    "default": {
+      "label": "File Writer",
+      "help": "Writes a selected output collection to a file.",
+      "params": {
+        "outputType": "Output collection",
+        "filename": "Output file name"
+      }
+    },
+    "email": {
+      "label": "Email",
+      "help": "Sends selected pipeline output as an email, optionally constrained by schedule settings.",
+      "params": {
+        "to": "To",
+        "from": "From",
+        "subject": "Subject",
+        "sendOnDOW": "Send on day of week"
+      }
+    }
+  }
+}

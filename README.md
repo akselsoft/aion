@@ -14,6 +14,84 @@ The Respond phase takes the information from the previous phase and acts on them
 
 These processes are defined by a configuration file that specifies the order and any additional attributes related to an individual phase. The configuration file has a standard format. The tool that reads and executes the content may be written in any tool.
 
+### Twilio SMS responder
+
+The built-in `sms` responder can send the content produced by an earlier engine. Set the producer's `outputType`, then point the responder's `inputType` at that value:
+
+```json
+{
+  "interpreters": [
+    {
+      "engine": "ollama",
+      "codeType": "js",
+      "enabled": true,
+      "name": "daily-ollama",
+      "inputType": "reviewContent",
+      "outputType": "SMSOutput",
+      "model": "llama3.2",
+      "temperature": 0.3,
+      "prompt": "Provide a single grade of the content generated."
+    }
+  ],
+  "responders": [
+    {
+      "engine": "sms",
+      "codeType": "js",
+      "enabled": true,
+      "provider": "twilio",
+      "inputType": "SMSOutput",
+      "phoneNumber": "+15555555555",
+      "maxLength": 320
+    }
+  ]
+}
+```
+
+Twilio sends require the optional `twilio` package and `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_PHONE_NUMBER` environment variables. Use `"dryRun": true` to verify the selected message without sending a text.
+
+### Email responder
+
+The built-in `email` responder can send the content produced by an earlier engine. Set the producer's `outputType`, then point the responder's `inputType` at that value:
+
+```json
+{
+  "engine": "email",
+  "codeType": "js",
+  "enabled": true,
+  "provider": "sendgrid",
+  "inputType": "Weekly",
+  "to": "andrew@example.com",
+  "from": "verified-sender@example.com",
+  "subject": "Weekly Direction",
+  "emailTitle": "Weekly Direction",
+  "sendOnDOW": 2
+}
+```
+
+Email sends can use SMTP or SendGrid:
+
+- SendGrid: set `provider: "sendgrid"` and provide `SENDGRID_API_KEY`. The `from` value, or `EMAIL_FROM`, must be a verified SendGrid sender.
+- SMTP: set `provider: "smtp"` and provide `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, and optionally `SMTP_PORT` and `EMAIL_FROM`.
+
+Scheduling is optional. If no schedule field is set, the email responder sends whenever the pipeline runs and matching `inputType` content exists. When `sendOnDOW` is set, email is only sent on matching days where `1=Sunday`, `2=Monday`, ..., `7=Saturday`. The responder also accepts `sendOnDow`, `sendOnDayOfWeek`, `sendOnDays`, or `sendOn`; values may be numbers, day names, or arrays such as `"Monday"` or `[2, 6]`.
+
+### PowerPoint responder
+
+The built-in `powerpoint` responder creates `.pptx` files from an earlier engine's output. It accepts either a JSON collection like `[{ "name": "Accomplishments", "content": ["A", "B"] }]` or markdown sections with headings and bullets.
+
+```json
+{
+  "engine": "powerpoint",
+  "codeType": "js",
+  "enabled": true,
+  "inputType": "WeeklyPresentation",
+  "title": "Weekly Direction",
+  "filename": "~/Documents/Daily/Summaries/Weekly-Direction.pptx"
+}
+```
+
+The generated deck includes a title slide and one slide per collection item or markdown section.
+
 This may be easier to understand by walking through an example using some simple engines or implementations for each phase.
 
 Imagine a folder structure that contains different files. You have a folder for meetings, budgets and code.  You also use a Task-based system like Azure DevOps.
@@ -132,6 +210,587 @@ The initial Node based implementation is called
 
 ```
 node runner.js ./folder/config.json
+```
+
+### Watcher (auto-run configs on change)
+
+Use `AION_Watcher.js` to automatically rerun AION configurations when source files change. This is useful for working on iterative content analysis where configs need to re-execute as inputs are modified.
+
+**Single config mode (for monitoring one folder-config pair)**
+```bash
+node AION_Watcher.js <watchDir> <configPath> [options]
+```
+
+Example with parameters:
+```bash
+node AION_Watcher.js ./project project/config.json --interval=1 --debounce=1500
+```
+
+**Map mode (recommended for multiple independent projects/domains)**
+
+When monitoring multiple separate directories, each with its own config file, use a watch-map JSON file to define the folder-to-config mappings. A map can also include `idle-time` entries that run a config after the watcher has been quiet for a configured duration, or `schedule` entries that run a config on matching days without requiring a file change.
+
+1. Create a watch-map file (e.g., `workspace/watch-map.json`):
+```json
+[
+  { "folder": "project-a", "config": "project-a/config.json" },
+  { "folder": "project-b", "config": "project-b/config.json" },
+  { "folder": "project-c", "config": "project-c/config.json" },
+  { "folder": "research/papers", "config": "research/papers-config.json" },
+  { "type": "schedule", "name": "monthly-backlog", "config": "gcbo/backlog-recommendations.json", "daysOfMonth": [1, 15, 30], "interval": 60, "intervalType": "minutes" },
+  { "type": "idle-time", "name": "quiet-review", "idleHours": 4, "config": "daily/idle-time.json" }
+]
+```
+
+Field descriptions:
+- `folder`: Directory to monitor for changes (relative to the directory containing the watch-map file, or use absolute paths).
+- `config`: AION config file to execute when this folder changes (relative to the map file directory, or use absolute paths).
+- `type: "idle-time"`: Runs the mapped `config` when no config has completed for the configured idle duration.
+- `type: "schedule"`: Runs the mapped `config` on matching calendar days even if no watched file changed. Scheduled entries run at most once per day.
+- `daysOfWeek`: Optional day-of-week list for scheduled entries, where `1=Sunday`, `2=Monday`, ..., `7=Saturday`.
+- `daysOfMonth`: Optional day-of-month list for scheduled entries, such as `[1, 15, 30]`. Use `"last"` for the last day of the month.
+- `startTime` and `endTime`: Optional inclusive execution window in 24-hour `HH:mm` format for scheduled entries.
+- `timezone`: Optional IANA timezone, such as `"America/Toronto"`, used for schedule days, time windows, and once-per-day tracking.
+- `idleHours`, `idleMinutes`, or `idleMs`: Idle duration for an `idle-time` entry.
+- `interval`: Optional per-entry scan interval. Defaults to minutes.
+- `intervalType`: Optional unit for `interval`; supports `minutes`, `hours`, `days`, `weeks`, or `months`. For example, use `{ "interval": 3, "intervalType": "months" }` for a quarterly scan.
+- `include`: Optional list of files or relative paths inside `folder` that should count as changes.
+- `ignore`: Optional list of names to ignore in addition to the default ignored names.
+- `runOnEmpty`: Set to `false` when an empty folder should not trigger a run.
+- `benchmark`: Set to `true` to log the config's execution duration and persist its latest result and recent history in the watch-map state file.
+- `watchConfigChanges`: Set to `true` to checksum the config and its recursively referenced `promptFile` values. A synchronized edit queues only that config, including changes detected after a watcher restart.
+
+2. Start the watcher with the map file:
+```bash
+node AION_Watcher.js <rootDir> <watchMapPath> [options]
+```
+
+Example:
+```bash
+node AION_Watcher.js . workspace/watch-map.json --interval=1 --debounce=1000
+```
+
+**Parameters**
+
+- `--interval` (default: 1 minute)
+  How often to scan folders for changes, in minutes. Smaller values = more responsive but higher CPU usage.
+
+- `--debounce` (default: 750ms)  
+  Time to wait after detecting a change before triggering a config run. Prevents rapid re-triggering if multiple files change in quick succession.
+
+**Watch-map Walkthrough**
+
+Given this watch-map structure:
+```json
+[
+  { "folder": "Daily", "config": "Daily/watch-map.json" },
+  { "folder": "Book-analysis", "config": "Book-analysis/config.json" },
+  { "folder": "project", "config": "project/config.json" }
+]
+```
+
+and you run:
+```bash
+node AION_Watcher.js . watch-map.json --interval=1 --debounce=1000
+```
+
+**What happens:**
+
+1. Watcher monitors three folders: `Daily/`, `Book-analysis/`, and `project/`
+2. Each folder is tracked independently with its own hash of file contents
+3. When a file in `Daily/` changes → runs `Daily/watch-map.json`
+4. When a file in `Book-analysis/` changes → runs `Book-analysis/config.json`
+5. When a file in `project/` changes → runs `project/config.json`
+6. Changes are debounced by 1 second, so if 5 files change in 500ms, only one run is triggered
+7. Scans for new changes every 1 minute
+
+**Behavior Notes**
+
+- Each mapped folder's state is hashed independently; only its matching config executes when that folder changes
+- The watcher writes a sidecar state file named `<watch-map>.state.json`
+- The state file records `lastRunAt`, the last completed config, per-config run times, idle-time runs, and per-folder hashes
+- Entries with `"benchmark": true` also write their latest measurement to `configBenchmarks` and retain the 100 most recent measurements in `benchmarkRuns`, including failed runs
+- On restart, persisted hashes let the watcher detect files that changed while it was stopped
+- An `idle-time` entry runs only after the configured idle duration has elapsed since the last completed config run
+- Runs are queued and processed sequentially to prevent race conditions or redundant API calls
+- Default ignored patterns: `node_modules`, `.git`, `.DS_Store`, `tmp`, `dist`
+- The watcher continues running until manually stopped (Ctrl+C)
+- Each run logs timestamp, folder detected, and config being executed
+
+---
+
+## Engines
+
+AION supports a wide range of built-in and custom engines for collection, analysis, and response workflows. Engines are referenced in config files by name and run in the order specified.
+
+### Core LLM Engines (`core/engines/`)
+
+These engines send content to various LLM providers for analysis and synthesis.
+
+| Engine | Provider | Model (default) | Notes |
+|--------|----------|-----------------|-------|
+| `chatgpt` | OpenAI | gpt-4 | Industry standard; requires OPENAI_API_KEY |
+| `claude` | Anthropic | claude-3-5-sonnet-20241022 | Strong reasoning; requires ANTHROPIC_API_KEY |
+| `grok` | xAI | grok-beta | OpenAI-compatible; requires GROK_API_KEY |
+| `groq` | Groq | mixtral-8x7b-32768 | Ultra-fast inference; requires GROQ_API_KEY |
+| `perplexity` | Perplexity | llama-3.1-70b-instruct | OpenAI-compatible; requires PERPLEXITY_API_KEY |
+| `cohere` | Cohere | command-r-plus | Specialized for production workloads; requires COHERE_API_KEY |
+| `mistral` | Mistral | mistral-large-latest | Open-source friendly; requires MISTRAL_API_KEY |
+| `ollama` | Local (Ollama) | mistral | Runs locally on http://localhost:11434; no API key needed |
+| `huggingface` | Hugging Face | mistralai/Mistral-7B-Instruct-v0.1 | Inference API for HF models; requires HUGGINGFACE_API_KEY |
+
+**Common LLM Engine Config Properties:**
+```json
+{
+  "engine": "chatgpt",
+  "model": "gpt-4",
+  "temperature": 0.3,
+  "maxTokens": 4096,
+  "tokenLimit": 12000,
+  "contextSize": 8192,
+  "inputType": "artifact",
+  "outputType": "ChatGPT",
+  "writeInput": true,
+  "writeOutputs": true,
+  "prompt": "Your analysis prompt here"
+}
+```
+
+For the `ollama` wrapper, `tokenLimit` (or `tokenlimit`) controls oversized-input handling. AION first estimates the combined input. If it fits, everything is sent as one request with the final prompt. If it exceeds the limit, AION estimates each file independently: files that fit pass through unchanged, while oversized files are split and compressed with a lightweight fact-preserving prompt. The compressed and pass-through files are then assembled with the final prompt and sent to Ollama once.
+
+Set `"splitInputType": "story"` on an `ollama` engine to run header/detail fan-out before token-limit handling. Each document from the matching input type is sent in its own Ollama request with all other selected input sections included as shared header context. Results are appended into one final output, and logs identify each detail file uploaded. `detailInputType` and `fanoutInputType` are accepted aliases.
+
+For `ollama`, `contextSize` sets Ollama's model context window by sending `num_ctx` in the `/api/chat` request options. This is different from `tokenLimit`: `contextSize` controls Ollama runtime capacity, while `tokenLimit` controls AION's chunking/compression decision. `numCtx` and `num_ctx` are accepted as aliases, but `contextSize` is the recommended config name.
+
+For long-running local models such as Qwen, set `"stream": true` on an `ollama` engine so AION reads Ollama's streamed response chunks instead of waiting for one complete non-streamed response. Use `headersTimeoutMs`, `bodyTimeoutMs`, and `requestTimeoutMs` to increase the HTTP timeouts for slow structured-output calls. Use `numPredict` to send Ollama `num_predict` and bound response length.
+
+To protect system memory, the built-in `ollama` interpreter unloads its model after the complete interpreter run by default. Compression and split-input calls within that interpreter share the loaded model; unloading happens only after all calls finish. Set `"unloadAfterRun": false` only when intentionally retaining a model for an immediately following interpreter. `keepAlive` is also passed through to Ollama when configured:
+
+```json
+{
+  "engine": "ollama",
+  "keepAlive": "30s",
+  "unloadAfterRun": true
+}
+```
+
+Prefer one consolidated AION watcher when several configurations use Ollama. A single watcher queues configuration runs sequentially, while separate watcher processes have independent queues and may load models concurrently.
+
+Set `"plaintext": true` on an `ollama` engine to render JSON input documents as readable text before sending them to Ollama. The default is `false`, which preserves the existing raw JSON formatting.
+
+### Common Free/Built-in Data Engines
+
+`artifacts`
+
+- Purpose: collect files into `ctx.passedFiles` from either a single file, a directory, or a simple wildcard path.
+- `baseDir` may be:
+  - A file: `Daily/Summaries/Daily.md`
+  - A directory: `Daily/Summaries`
+  - A wildcard file pattern in one directory: `Daily/Summaries/Daily*.md`
+- Time filters:
+  - `sinceDays`: include files updated within the last N days
+  - `sinceHours`: include files updated within the last N hours
+  - `sinceMs`: include files updated within the last N milliseconds
+  - `sinceLastRun`: include files updated since the previous run for this collector scope
+  - `freshPeriod`: include files updated in the current `day`, `week`, `month`, or `quarter`
+- `sinceLastRun` scopes default to config path + collector name + `baseDir`, so separate configs watching the same folder do not consume each other's cutoff. Use `lastRunKey` or `sinceLastRunKey` to intentionally share or customize the scope.
+- Scoped timestamps are stored in `.artifacts-last-run.json` under `scopes`; the top-level `lastRun` remains for visibility and older tooling.
+- `sortBy`: controls the document order in the artifact bundle. Use `filename` for filename order or `date` for modified-date order. `date` is the default.
+- `showFileName`: when `true`, downstream Ollama input prefixes each collected document with `---- File: <filename>`.
+- Example:
+
+```json
+{
+  "engine": "artifacts",
+  "codeType": "js",
+  "name": "daily-summary",
+  "baseDir": "~/Documents/Daily/Summaries/Daily*.md",
+  "sinceDays": 7,
+  "sortBy": "filename",
+  "showFileName": true,
+  "prompt": "Daily summary files updated in the past 7 days."
+}
+```
+
+`area-prioritizer`
+
+- Purpose: deterministically select the highest-priority attention items from explicit tasks and cadence-eligible priority areas without using an LLM.
+- The interpreter normalizes both inputs into one candidate collection and emits two inspectable passed-file entries. `area-priorities` contains `allCandidates`, `rankedCandidates`, and the authoritative downstream `selectedItems`; `area-priorities-excluded` separately contains rejected source records under `excludedItems`.
+- Summary counts remain on `area-priorities`, while the excluded entry repeats `sourceRecordCount` and `excludedCount` for standalone `dumpPassed` inspection.
+- Initial candidate types are `task` (`task:<task id>`) and `area` (`area:<area id>`). An eligible area contributes a candidate titled with its area name even when no task exists for that area.
+- Area candidates do not require `defaultAction`. When supplied, it is used as an optional deterministic candidate-title override; otherwise the area name is used. Richer domain actions belong in the area's `promptFile` and can be developed later by `task-proposer` and an LLM interpreter.
+- Source identity is retained through `sourceType`, `sourceId`, `candidateType`, and `candidateId`; source-specific fields are retained under `metadata`.
+- The interpreter reads priority state for cadence and selection-history ranking but does not modify or persist state.
+- Example:
+
+```json
+{
+  "engine": "area-prioritizer",
+  "codeType": "js",
+  "enabled": false,
+  "tasksInputType": "tasks",
+  "priorityAreasInputType": "priority-areas",
+  "priorityStateInputType": "priority-state",
+  "outputType": "area-priorities",
+  "excludedOutputType": "area-priorities-excluded",
+  "itemLimit": 3,
+  "dueSoonDays": 7,
+  "includeOverdue": true
+}
+```
+
+The referenced priority-area input only needs the area metadata used for deterministic selection; `promptFile` supplies contextual guidance for later task proposals:
+
+```json
+{
+  "id": "cheryl",
+  "name": "Cheryl",
+  "tier": 2,
+  "rank": 1,
+  "cadence": "2w",
+  "active": true,
+  "promptFile": "Cheryl Context.md"
+}
+```
+
+`task-proposer`
+
+- Purpose: build one LLM-ready `task-proposal-context` passed-file entry per eligible priority area. It does not call an LLM itself.
+- Domain context, responsibilities, desired outcomes, milestones, sequencing, and the meaning of progress belong in each area's `promptFile`; the context builder contains no area-specific rules.
+- Active areas are included only when their prompt exists and they are cadence-eligible or explicitly selected through an `area-priorities` input. Missing prompts are reported in a separate `task-proposal-context-skipped` entry; there is no generic prompt fallback.
+- Every area context includes the complete matching task history, including open, in-progress, blocked, closed, and cancelled tasks, plus area selection history and configured context.
+- A following standard `ollama` or `chatgpt` interpreter consumes `task-proposal-context` and produces the model response. Those provider engines remain responsible for the LLM call and model selection.
+- Contexts and resulting proposals are advisory. The builder never modifies authoritative tasks or priority state.
+- Each proposed task is requested in the exact `tasks.json` shape (`id`, `title`, `areaId`, `dueDate`, `status`, `notes`, `createdAt`, `updatedAt`, and `closedAt`). The builder reserves unique task IDs for the run so accepted proposals can be pasted directly into the authoritative `tasks` array.
+
+Priority-area example:
+
+```json
+{
+  "id": "pattern-witness",
+  "name": "Pattern Witness",
+  "cadence": "d",
+  "active": true,
+  "promptFile": "Pattern Witness Context.md"
+}
+```
+
+Context-builder and LLM examples (left disabled until review is desired):
+
+```json
+{
+  "engine": "task-proposer",
+  "codeType": "js",
+  "enabled": false,
+  "tasksInputType": "morning-tasks",
+  "priorityAreasInputType": "priority-areas",
+  "priorityStateInputType": "task-priority-state",
+  "promptsDir": "./prompts",
+  "maxProposalsPerArea": 5,
+  "outputType": "task-proposal-context"
+},
+{
+  "engine": "ollama",
+  "enabled": false,
+  "inputType": "task-proposal-context",
+  "promptFile": "./prompts/Task Proposal LLM.md",
+  "model": "llama3.1:8b",
+  "outputType": "task-proposals"
+},
+{
+  "engine": "chatgpt",
+  "enabled": false,
+  "inputType": "task-proposal-context",
+  "promptFile": "./prompts/Task Proposal LLM.md",
+  "model": "gpt-4o-mini",
+  "outputType": "task-proposals"
+}
+```
+
+An area-specific context prompt can remain concise while carrying the domain intelligence. It may describe an ongoing responsibility or relationship rather than a goal:
+
+```markdown
+# Pattern Witness context
+
+Long-term goal: finish and publish the manuscript.
+Current state: the first draft is incomplete.
+Meaningful progress: complete missing scenes before researching agents.
+Do not propose outreach until a complete draft exists.
+Review existing completed work and identify the next unmet prerequisite.
+```
+
+`sql.collector`
+
+- Purpose: run a SQL query and add the JSON result directly into `ctx.passedFiles`.
+- Config:
+
+```json
+{
+  "engine": "sql.collector",
+  "codeType": "js",
+  "name": "orders",
+  "client": "postgres",
+  "connection": {
+    "host": "localhost",
+    "port": 5432,
+    "user": "app",
+    "password": "secret",
+    "database": "sales"
+  },
+  "query": "select id, status, total from orders where status = 'open'",
+  "outputType": "orders-json"
+}
+```
+
+- Output shape in `passedFiles`: one JSON document with `{ rows: [...], rowCount: N }`.
+- Supported clients: `postgres`, `mssql`, `mysql`, `sqlite`.
+- Driver note: database drivers are loaded optionally at runtime. Install the matching package before use:
+  `pg`, `mssql`, `mysql2`, `better-sqlite3` or `sqlite3`.
+
+`json-evaluator`
+
+- Purpose: evaluate JSON data already present in `passedFiles`, then emit a new JSON result bundle under `outputType`.
+- Config:
+
+```json
+{
+  "engine": "json-evaluator",
+  "codeType": "js",
+  "inputType": "orders-json",
+  "outputType": "open-order-count",
+  "action": "count",
+  "filters": [
+    { "attribute": "status", "operator": "=", "value": "open" }
+  ]
+}
+```
+
+- Supported actions: `count`, `sum`, `avg`, `min`, `max`, `distinct`, `pluck`.
+- `field` is required for all actions except `count`.
+- `group` accepts one or more attributes and returns grouped results.
+- `groupFilter` applies after grouping against the grouped output rows.
+- Result behavior:
+  if the result is a single scalar, `result` is that scalar;
+  if grouped output has one row, `result` is that row object;
+  if multiple grouped rows exist, `result` is an array.
+
+`word-count`
+
+- Purpose: count words for documents in matching `passedFiles` entries and estimate page counts.
+- Requires `inputType`; emits a JSON array under `outputType`.
+- `wordsPerPage` defaults to `250`.
+- Optional filters: `sourceNames` and `itemNames`.
+- Optional `ignore` array supports simple glob-style file patterns. Patterns are matched against document filename/name/title/path, and also against the basename for path values. For example:
+  - `*.notes.md` ignores `chapter.notes.md`
+  - `*questions.md` ignores both `questions.md` and `chapter.questions.md`
+- When `mergeExisting` is enabled, ignored rows are removed from the persisted count file as well as skipped from new counts.
+- Example:
+
+```json
+{
+  "engine": "word-count",
+  "codeType": "js",
+  "inputType": "post-idea",
+  "outputType": "post-idea-count",
+  "wordsPerPage": 250,
+  "ignore": ["*.notes.md", "*questions.md"]
+}
+```
+
+Book/content review example:
+
+```json
+{
+  "engine": "word-count",
+  "codeType": "js",
+  "enabled": true,
+  "name": "content-review-word-count",
+  "inputType": "artifact",
+  "outputType": "content-review-count",
+  "sourceNames": ["content-recent"],
+  "wordsPerPage": 250,
+  "persistJsonFile": "~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Patterns of Existence/Discussions/wordcontent.json",
+  "mergeExisting": true,
+  "mergeKey": "filename",
+  "ignore": ["*.notes.md", "*questions.md"]
+}
+```
+
+Output document shape:
+
+```json
+[
+  {
+    "name": "A.md",
+    "wordcount": 200,
+    "pagecount": 1,
+    "filename": "A.md",
+    "itemName": "Ideas",
+    "sourceName": "post-ideas"
+  }
+]
+```
+
+`JSONDB`
+
+- Purpose: merge JSON topic records into current and long-term Daily database files.
+- Input records can include `topic`, `people`, `date`, `summary`, `detail summary`, `actionItems`, `priority`, and `tier`.
+- Config paths:
+  - `currentFile`: current topic snapshot
+  - `longTermFile`: accumulated topic history
+  - `peopleSummaryFile`: optional generated Markdown summary of each person's latest mention/contact date, useful for weekly relationship planning
+- Example:
+
+```json
+{
+  "engine": "JSONDB",
+  "codeType": "js",
+  "inputType": "db-input",
+  "currentFile": "~/Documents/Daily/Database/Current.json",
+  "longTermFile": "~/Documents/Daily/Database/LongTerm.json",
+  "peopleSummaryFile": "~/Documents/Daily/Summaries/People.md"
+}
+```
+
+### Core Utility Engines (`core/engines/`)
+
+| Engine | Purpose |
+|--------|---------|
+| `tokenTrimmer` | Reduces token count by removing or summarizing content; respects configured thresholds |
+| `stopWordReducer` | Removes common stop words to reduce file size; useful for pre-processing |
+| `llmsummarizer` | Generic summarization using configured LLM |
+| `heatmap` | Analyzes frequency and importance of terms across documents |
+
+### Built-in Engines (`lib/impl/builtin/`)
+
+Engines that ship with AION for data collection, transformation, and output.
+
+**Collectors & Processors:**
+| Engine | Purpose |
+|--------|---------|
+| `documents.collector.js` | Discovers and collects documents from folders per config |
+| `extract-blocks.js` | Extracts specific blocks (e.g., code, quotes) from markdown or text |
+| `archive.js` | Archives processed outputs to timestamped backups |
+
+**Transformers:**
+| Engine | Purpose |
+|--------|---------|
+| `artifacts.js` | Manages artifact files and metadata; supports JSON/CSV/Markdown |
+| `action-items.js` | Maintains an `Action-Items.md` table from collected context |
+| `action-items.collector.js` | Emits overdue, recurring, and upcoming action items for responders |
+| `area-prioritizer.js` | Deterministically combines task and cadence-area candidates into `area-priorities.selectedItems` |
+| `task-proposer.js` | Builds area-specific `task-proposal-context` entries for a following LLM interpreter |
+| `dumpPassed.js` | Debug utility; writes current `ctx.passedFiles` to JSON for inspection |
+| `word-count.js` | Counts words per document and estimates page counts |
+| `JSONDB.js` | Maintains JSON topic databases and optional people contact summaries |
+| `lifelog.js` | Processes personal/daily log entries into structured summaries |
+
+**Responders & Utilities:**
+| Engine | Purpose |
+|--------|---------|
+| `default.js` | Default responder; writes outputs to files |
+| `email.js` | Sends responder output by SMTP or SendGrid; supports optional day-of-week scheduling |
+| `powerpoint.js` | Creates `.pptx` presentations from JSON collections or markdown sections |
+| `sms.js` | Sends responder output by SMS through Twilio or Vonage |
+| `notAuthorized.js` | Permission handler; skips execution if authorization fails |
+| `heatmap.js` | (wrapper) Delegates to core heatmap engine |
+| `tokenTrimmer.js` | (wrapper) Delegates to core tokenTrimmer engine |
+
+### Implementations (Personas)
+
+Implementations are predefined workflow packages combining custom engines, prompts, and configurations for specific domains.
+
+**`implementations/becca/`**
+- **Purpose:** Personal/daily journaling, summarization, and reflection
+- **Components:** Custom collectors, diary summarization engines
+- **Config:** `implementations/becca/config.json`, `implementations/becca/template.json`
+- **Key Files:** `bootstrapCollector.js`, source adapters for various input types
+
+**`implementations/deacon/`**
+- **Purpose:** Code analysis and documentation
+- **Components:** Custom code parsing engines, documentation generators
+- **Config:** `implementations/deacon/template.json`
+- **Key Files:** Custom engines in `implementations/deacon/engines/`
+
+#### Deacon DevOps Planning Scoring
+
+`implementations/deacon/sourceadapters/devops.planning.js` uses a configurable additive scoring model for planning signals. The default policy is:
+
+- Priority: P1 `60`, P2 `40`, P3 `20`, P4 `0`.
+- Work item type: Bug `+5`, Feature `+0`, so a Bug beats an otherwise identical Feature without pretending all Bugs have lower effort.
+- Work area: Case Files `+10`, People `+5`, Organizations `+0`. This can change ordering among otherwise similar items, but it is intentionally smaller than a priority tier so Case Files does not automatically outrank all People or Organizations work.
+- Recency: up to `15` points within a `30` day changed-date window.
+- Age: up to `10` points, with newly created items receiving the maximum age score and very old items receiving less.
+- Effort: effort `1` to `5` maps to `+3`, `+2`, `+1`, `0`, `-2`.
+
+Put overrides in a config-level `scoring` block, or on the `devops.planning` source as `scoring`. Each scored item includes `score`, `scoreBreakdown`, and `scoreInputs`; the adapter also writes `planning-scores.json` for explainability and downstream AION analysis.
+
+**`implementations/free/`**
+- **Purpose:** Free/open-source reference implementation
+- **Components:** Basic collectors and summarizers
+- **Config:** `implementations/free/template.json`
+- **Use Case:** Starting point for custom implementations
+
+**`implementations/orion/`**
+- **Purpose:** Project and organizational analysis
+- **Components:** Project structure parsing, task aggregation, roadmap generation
+- **Config:** `implementations/orion/template.json`
+- **Key Files:** Custom engines in `implementations/orion/engines/`
+
+### Using Engines in Configs
+
+Engines are referenced in config files under `params.collectors`, `params.interpreters`, or `params.responders`:
+
+```json
+{
+  "persona": "free",
+  "params": {
+    "collectors": [
+      {
+        "engine": "documents.collector",
+        "seedDir": "./input"
+      }
+    ],
+    "interpreters": [
+      {
+        "engine": "chatgpt",
+        "inputType": "artifact",
+        "prompt": "Summarize these documents"
+      }
+    ],
+    "responders": [
+      {
+        "engine": "default",
+        "outputType": "file",
+        "filename": "analysis.md"
+      }
+    ]
+  }
+}
+```
+
+### Custom Engines
+
+To create a custom engine, implement the standard interface:
+
+```javascript
+module.exports = {
+  async run(ctx, engineCfg, personaCfg) {
+    // ctx.passedFiles: array of { name, type, documents: [{ filename, content }] }
+    // engineCfg: configuration from the config.json
+    // personaCfg: full persona configuration
+    
+    // Process data, modify ctx.passedFiles as needed
+    ctx.passedFiles.push({
+      name: 'my-result',
+      type: 'custom',
+      documents: [{ 
+        filename: 'output.md', 
+        content: 'Analysis result...' 
+      }]
+    });
+  }
+};
 ```
 
 ---

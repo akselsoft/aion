@@ -15,7 +15,6 @@ async function run(projectPath, overrides = {}) {
         if (!stat) throw new Error(`Path not found: ${projectPath}`);
 
         if (stat.isFile()) {
-            // Direct config path provided (persona.json or config.json)
             const cfg0 = await loadConfig(projectPath);
             if (cfg0.__mode === 'persona') {
                 logStep('Persona mode: loading persona config');
@@ -25,34 +24,34 @@ async function run(projectPath, overrides = {}) {
                 await impl.run();
                 logStep('Persona execution completed');
                 return;
-            } else {
-                // Legacy: use the directory of the file
-                const projectRoot = path.dirname(projectPath);
-                logStep('Legacy mode: loading project configuration');
-                const config = await loadProjectConfig(projectRoot);
-                logInfo(`Loaded config for project: ${config.name || 'Unnamed project'}`);
-                const engineName = config.implementation;
-                if (!engineName) {
-                    logWarn('No engine specified in config. Skipping processing.');
-                    return;
-                }
-                logInfo(`Using engine: ${engineName}`);
-                const engineModulePath = path.resolve(__dirname, `./implementations/${engineName}/run.js`);
-                if (!fs.existsSync(engineModulePath)) {
-                    logWarn(`❌ Implementation "${engineName}" not found. Skipping execution.`);
-                    return;
-                }
-                const implementationModule = require(engineModulePath);
-                const implementationTier = implementationModule.meta?.tier || 'free';
-                if (implementationTier === 'premium' && config.tier !== 'premium') {
-                    logWarn(`🔒 Implementation "${engineName}" requires premium access. Skipping.`);
-                    return;
-                }
-                const { runEngine } = implementationModule;
-                const result = await runEngine(projectRoot, overrides);
-                logStep('Engine execution completed');
-                return result;
             }
+
+            // Legacy file passed explicitly
+            const projectRoot = path.dirname(projectPath);
+            logStep('Legacy mode: loading project configuration');
+            const config = await loadProjectConfig(projectRoot, projectPath);
+            logInfo(`Loaded config for project: ${config.name || 'Unnamed project'}`);
+            const engineName = config.implementation;
+            if (!engineName) {
+                logWarn('No engine specified in config. Skipping processing.');
+                return;
+            }
+            logInfo(`Using engine: ${engineName}`);
+            const engineModulePath = path.resolve(__dirname, `./implementations/${engineName}/run.js`);
+            if (!fs.existsSync(engineModulePath)) {
+                logWarn(`❌ Implementation "${engineName}" not found. Skipping execution.`);
+                return;
+            }
+            const implementationModule = require(engineModulePath);
+            const implementationTier = implementationModule.meta?.tier || 'free';
+            if (implementationTier === 'premium' && config.tier !== 'premium') {
+                logWarn(`🔒 Implementation "${engineName}" requires premium access. Skipping.`);
+                return;
+            }
+            const { runEngine } = implementationModule;
+            const result = await runEngine(projectRoot, overrides);
+            logStep('Engine execution completed');
+            return result;
         }
 
         // Directory path provided – Load config and route based on keys

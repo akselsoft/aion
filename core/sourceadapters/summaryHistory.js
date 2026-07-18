@@ -1,9 +1,11 @@
 // core/sourceAdapters/summaryHistory.js
 const fs = require('fs');
 const path = require('path');
+const { getHistoryDir, getOutputDir } = require('../utils/outputPaths');
 
-function summarizeRecentMetrics(projectRoot, count = 3) {
-    const outputsDir = path.join(projectRoot, 'outputs');
+function summarizeRecentMetrics(projectRoot, config = {}, count = 3) {
+    const outputsDir = getOutputDir(projectRoot, config);
+    if (!fs.existsSync(outputsDir)) return '';
     const folders = fs.readdirSync(outputsDir)
         .filter(name => /^iteration-\d+$/.test(name))
         .sort((a, b) => {
@@ -40,8 +42,8 @@ function summarizeRecentMetrics(projectRoot, count = 3) {
     return table + '\n\n';
 }
 
-module.exports = async function summaryHistoryLoader(projectRoot, src) {
-    const summaryPath = path.join(projectRoot, 'history', 'summary-brief.md');
+module.exports = async function summaryHistoryLoader(projectRoot, src, fullConfig = {}) {
+    const summaryPath = path.join(getHistoryDir(projectRoot, fullConfig), 'summary-brief.md');
 
     if (!fs.existsSync(summaryPath)) {
         console.warn(`📭 No previous summary found at: ${summaryPath}`);
@@ -50,7 +52,7 @@ module.exports = async function summaryHistoryLoader(projectRoot, src) {
 
     const content = fs.readFileSync(summaryPath, 'utf-8');
 
-    const metricsTable = summarizeRecentMetrics(projectRoot, 3);
+    const metricsTable = summarizeRecentMetrics(projectRoot, fullConfig, 3);
     let finalSummaryBrief = (metricsTable ? metricsTable : 'no past metrics') + '\n\n' + content;
     console.log(`📖 Loaded previous summary`, finalSummaryBrief);
 

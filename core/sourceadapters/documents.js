@@ -7,19 +7,9 @@ const path = require('path');
 // - turndown: HTML -> Markdown
 // - pdf-parse: PDF -> text
 // - xlsx: XLSX -> CSV/JSON (sheets)
+// NOTE: Some environments abort when requiring optional native modules.
+// To avoid startup crashes we lazy-load inside converters.
 let mammoth, TurndownService, pdfParse, XLSX;
-try {
-  mammoth = require('mammoth');
-} catch {}
-try {
-  TurndownService = require('turndown');
-} catch {}
-try {
-  pdfParse = require('pdf-parse');
-} catch {}
-try {
-  XLSX = require('xlsx');
-} catch {}
 
 async function ensureDir(dir) {
   await fs.mkdir(dir, { recursive: true }).catch(() => {});
@@ -58,6 +48,8 @@ function resolvePrompt(folderPath, sourceConfig, files) {
 }
 
 async function convertDocxToMarkdown(filePath) {
+  if (!mammoth) { try { mammoth = require('mammoth'); } catch {} }
+  if (!TurndownService) { try { TurndownService = require('turndown'); } catch {} }
   if (mammoth && TurndownService) {
     const { value: html } = await mammoth.convertToHtml({ path: filePath });
     const turndown = new TurndownService({ headingStyle: 'atx', emDelimiter: '*', bulletListMarker: '-' });
@@ -91,9 +83,8 @@ async function convertDocxToMarkdown(filePath) {
 }
 
 async function convertPdfToMarkdown(filePath) {
-  if (!pdfParse) {
-    throw new Error('Missing dependency: pdf-parse');
-  }
+  if (!pdfParse) { try { pdfParse = require('pdf-parse'); } catch {} }
+  if (!pdfParse) throw new Error('Missing dependency: pdf-parse');
   const dataBuffer = await fs.readFile(filePath);
   const data = await pdfParse(dataBuffer);
   const lines = [`# ${path.basename(filePath)}`, '', data.text.trim()];
@@ -147,6 +138,7 @@ function csvToMarkdownTable(csvText) {
 }
 
 async function convertXlsxToOutputs(filePath, excelFormat = 'md') {
+  if (!XLSX) { try { XLSX = require('xlsx'); } catch {} }
   if (!XLSX) throw new Error('Missing dependency: xlsx');
   const wb = XLSX.read(await fs.readFile(filePath));
   const outputs = [];
@@ -170,15 +162,41 @@ async function convertXlsxToOutputs(filePath, excelFormat = 'md') {
 
 module.exports = async function loadDocumentsSource(projectRoot, sourceConfig) {
   const folderPath = path.join(projectRoot, sourceConfig.location);
+  const debug = !!sourceConfig.debug;
   const copyToArtifacts = !!sourceConfig.config?.copyToArtifacts;
   const recurse = !!sourceConfig.recurse;
   const targetFormat = (sourceConfig.format || sourceConfig.target || 'md').toLowerCase(); // 'md' or 'json'
 
-  const files = await fs.readdir(folderPath).catch(() => []);
+  if (debug) {
+    console.log(`🔍 [documents loader] Starting scan of: ${folderPath}`);
+    console.log(`🔍 [documents loader] Recurse: ${recurse}, Format: ${targetFormat}`);
+  }
+
+  // Check if folder exists
+  const folderExists = fssync.existsSync(folderPath);
+  if (debug) {
+    console.log(`🔍 [documents loader] Folder exists: ${folderExists}`);
+  }
+
+  if (!folderExists) {
+    console.warn(`⚠️  [documents loader] Folder not found: ${folderPath}`);
+    return { name: sourceConfig.name || 'documents', prompt: '', documents: [] };
+  }
+
+  const files = await fs.readdir(folderPath).catch((err) => {
+    if (debug) console.error(`❌ [documents loader] Error reading directory: ${err.message}`);
+    return [];
+  });
+  
+  if (debug) {
+    console.log(`🔍 [documents loader] Files in folder: ${files.join(', ') || '(empty)'}`);
+  }
+
   const promptText = resolvePrompt(folderPath, sourceConfig, files);
 
   // Identify candidate files
-  const allowed = ['.docx', '.pdf', '.xlsx'];
+  // Include Markdown/text so existing .md/.txt artifacts are ingested alongside converted binaries
+  const allowed = ['.docx', '.pdf', '.xlsx', '.md', '.txt'];
   let filePaths;
   if (recurse) {
     filePaths = await readFilesRecursively(folderPath, allowed);
@@ -186,6 +204,13 @@ module.exports = async function loadDocumentsSource(projectRoot, sourceConfig) {
     filePaths = (await fs.readdir(folderPath))
       .filter(name => allowed.some(ext => name.toLowerCase().endsWith(ext)))
       .map(name => path.join(folderPath, name));
+  }
+
+  if (debug) {
+    console.log(`🔍 [documents loader] Found ${filePaths.length} candidate file(s)`);
+    filePaths.forEach((fp, idx) => {
+      console.log(`  [${idx + 1}] ${path.basename(fp)}`);
+    });
   }
 
   const documents = [];

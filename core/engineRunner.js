@@ -1,10 +1,48 @@
 const fs = require('fs');
 const { logInfo, logFile, logWarn, logError, logStep } = require('./utils/logger');
+const { getOutputDir } = require('./utils/outputPaths');
+
+function stripDataForDebug(items = []) {
+    return (items || []).map(i => ({
+        name: i.name,
+        type: i.type,
+        prompt: i.prompt,
+        documents: (i.documents || []).map(d => ({
+            filename: d.filename || d.name,
+            filetype: d.filetype,
+            content: d.content
+        }))
+    }));
+}
+
+function writeDebugSnapshot(config, projectRoot, stage, items) {
+    if (!config?.debug) return;
+    try {
+        const path = require('path');
+        const fs = require('fs');
+        const outPath = path.join(getOutputDir(projectRoot, config), 'passedFiles.json');
+        fs.mkdirSync(path.dirname(outPath), { recursive: true });
+        let log = [];
+        if (fs.existsSync(outPath)) {
+            log = JSON.parse(fs.readFileSync(outPath, 'utf-8') || '[]');
+            if (!Array.isArray(log)) log = [];
+        }
+        log.push({
+            stage,
+            timestamp: new Date().toISOString(),
+            items: stripDataForDebug(items)
+        });
+        fs.writeFileSync(outPath, JSON.stringify(log, null, 2), 'utf-8');
+    } catch (err) {
+        console.warn(`⚠️ Failed to write debug snapshot (${stage}): ${err.message}`);
+    }
+}
 
 async function runEngines(engineList, data, config, projectRoot) {    // show me the entire config object
     console.log("Running engines with config:", config.engines);
     console.log("Engine project root:", projectRoot);
     console.log("Engine Data:", data.length);
+    writeDebugSnapshot(config, projectRoot, 'start', data);
     const userTier = config.tier || 'free'; // e.g., 'free' or 'premium'
 
     for (const engine of engineList) {
@@ -44,6 +82,7 @@ async function runEngines(engineList, data, config, projectRoot) {    // show me
 
         try {
             // data = await engineFunc(data, config, projectRoot);
+            logInfo(`Running ${engine}`)
 
             let output = await engineFunc(data, config, projectRoot);
 
@@ -58,6 +97,10 @@ async function runEngines(engineList, data, config, projectRoot) {    // show me
             }
             // Merge new output into data, ensuring no duplicates
             const existingNames = new Set(data.map(d => d.name));
+            if (!output) {
+                logWarn(`⚠️ Engine "${engine}" returned no data.`);
+                continue;
+            }
             output = output.filter(o => !existingNames.has(o.name));
             if (output.length === 0) {
                 logWarn(`⚠️ Engine "${engine}" returned no new data.`);
@@ -69,6 +112,7 @@ async function runEngines(engineList, data, config, projectRoot) {    // show me
             data.push(...output);
 
             logFile(`✅ Engine returned: ${JSON.stringify(data, null, 2)}`);
+            writeDebugSnapshot(config, projectRoot, `after:${engine}`, data);
         } catch (err) {
             logError(`❌ Engine "${engine}" failed: ${err.message} ${err.stack}`);
         }
